@@ -29,15 +29,13 @@ Private GitHub assets use the token from the `GITHUB_TOKEN` environment variable
 
 ### Using this fork in a mod repository
 
-Clone this repository, then add its path to the existing `pluginManagement` block in the mod's `settings.gradle.kts`:
+Clone this repository, then run:
 
-```kotlin
-pluginManagement {
-    includeBuild("C:/path/to/Pxx500GTNHGradle")
-}
+```powershell
+.\install-local-fork.ps1
 ```
 
-No other project files need to change.
+This makes the fork available to every local project using GTNHGradle without changing their files. Run the installer again if you move the clone. Delete the installed file shown by the command to disable it.
 
 To test a local dependency, publish it to Maven Local:
 
