@@ -7,6 +7,7 @@ import com.diffplug.blowdryer.Blowdryer;
 import com.gtnewhorizons.retrofuturagradle.shadow.com.google.common.collect.ImmutableMap;
 import com.gtnewhorizons.gtnhgradle.modules.AccessTransformerModule;
 import com.gtnewhorizons.gtnhgradle.modules.CodeStyleModule;
+import com.gtnewhorizons.gtnhgradle.modules.FullPackModule;
 import com.gtnewhorizons.gtnhgradle.modules.GitVersionModule;
 import com.gtnewhorizons.gtnhgradle.modules.IdeIntegrationModule;
 import com.gtnewhorizons.gtnhgradle.modules.JVMDowngraderModule;
@@ -101,6 +102,7 @@ public class GTNHGradlePlugin implements Plugin<Project> {
             GitVersionModule.class,
             CodeStyleModule.class,
             ToolchainModule.class,
+            FullPackModule.class,
             ScalaModule.class,
             StructureCheckModule.class,
             AccessTransformerModule.class,
