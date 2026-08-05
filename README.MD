@@ -27,6 +27,18 @@ Build and run the current mod in a full GTNH client with:
 
 Private GitHub assets use the token from the `GITHUB_TOKEN` environment variable.
 
+### Using this fork in a mod repository
+
+Clone this repository, then add its path to the existing `pluginManagement` block in the mod's `settings.gradle.kts`:
+
+```kotlin
+pluginManagement {
+    includeBuild("C:/path/to/Pxx500GTNHGradle")
+}
+```
+
+No other project files need to change.
+
 To test a local dependency, publish it to Maven Local:
 
 ```shell

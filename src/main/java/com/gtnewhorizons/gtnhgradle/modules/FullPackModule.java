@@ -44,8 +44,7 @@ import com.gtnewhorizons.retrofuturagradle.util.Distribution;
 /** Adds tasks which run the locally built mod inside a complete GTNH client. */
 public class FullPackModule implements GTNHModule {
 
-    public static final String DEFAULT_MANIFEST_URL = "https://raw.githubusercontent.com/GTNewHorizons/"
-        + "DreamAssemblerXXL/master/releases/manifests/fullpack/daily.json";
+    public static final String DEFAULT_MANIFEST_URL = "https://github.com/Pxx500/DreamAssemblerXXL/releases/download/fullpack-daily/daily.json";
 
     @Override
     public boolean isEnabled(@NotNull PropertiesConfiguration configuration) {
