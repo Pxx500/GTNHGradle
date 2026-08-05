@@ -43,6 +43,8 @@ dependencies {
     implementation("org.jdom:jdom2:2.0.6.1")
     // Maven artifact for version comparison
     implementation("org.apache.maven:maven-artifact:3.9.9")
+    // Full-pack manifest parsing
+    implementation("com.google.code.gson:gson:2.13.2")
 
     // All these plugins will be present in the classpath of the project using our plugin, but not activated until explicitly applied
     api(pluginDep("com.gtnewhorizons.retrofuturagradle","2.0.2"))
