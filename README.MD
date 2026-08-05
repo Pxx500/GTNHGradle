@@ -14,6 +14,41 @@ and then registers the `gtnhGradle` extension object which can be used to activa
 `test` tests make sure that applying the plugin works correctly in a simple Gradle setup.
 Bulk of the testing is done in `functionalTest` which uses [Gradle TestKit](https://docs.gradle.org/8.1.1/userguide/test_kit.html) to test entire workflows in sandboxed Gradle environments.
 
+## Running against the complete modpack
+
+Build and run the current mod in a full GTNH client with:
+
+```shell
+./gradlew runFullPack
+```
+
+`runFullPack` runs `prepareFullPackClient` automatically. Downloaded files are shared between projects under
+`<GRADLE_USER_HOME>/caches/gtnh/fullpack`.
+
+Private GitHub assets use the token from the `GITHUB_TOKEN` environment variable.
+
+To test a local dependency, publish it to Maven Local:
+
+```shell
+./gradlew publishToMavenLocal
+```
+
+Then use that version in the project and enable Maven Local overrides:
+
+```kotlin
+repositories {
+    mavenLocal()
+}
+
+dependencies {
+    api("com.github.GTNewHorizons:OtherMod:1.2.3-local:dev")
+}
+
+fullPack {
+    preferMavenLocal.set(true)
+}
+```
+
 ## Updating from the previous buildscript
 
 0. Make sure you're on the latest `master` commit and you pulled the recent repository changes ;-)
