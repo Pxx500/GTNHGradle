@@ -25,8 +25,6 @@ Build and run the current mod in a full GTNH client with:
 `runFullPack` runs `prepareFullPackClient` automatically. Downloaded files are shared between projects under
 `<GRADLE_USER_HOME>/caches/gtnh/fullpack`.
 
-Private GitHub assets use the token from the `GITHUB_TOKEN` environment variable.
-
 ### Using this fork in a mod repository
 
 Clone this repository, then run:
