@@ -34,22 +34,102 @@ jobs:
             exit 0
           fi
 
-          git switch --force-create sync/upstream-master upstream/master
-          git push --force-with-lease origin sync/upstream-master
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --force-create sync/upstream-master master
 
-          pr_number=$(gh pr list --base master --head sync/upstream-master --state open --json number --jq '.[0].number')
-          if [ -z "$pr_number" ]; then
-            gh pr create \
-              --base master \
-              --head sync/upstream-master \
-              --title "Sync upstream master" \
-              --body "Syncs this fork with the latest GTNewHorizons/GTNHGradle master."
-            pr_number=$(gh pr list --base master --head sync/upstream-master --state open --json number --jq '.[0].number')
-          fi
+          set +e
+          git merge --no-commit --no-edit upstream/master
+          merge_status=$?
+          set -e
 
-          if ! gh pr merge "$pr_number" --auto --merge; then
-            mergeable=$(gh pr view "$pr_number" --json mergeable --jq '.mergeable')
-            if [ "$mergeable" != "CONFLICTING" ]; then
+          if [ "$merge_status" -ne 0 ]; then
+            conflicts=$(git diff --name-only --diff-filter=U)
+            if [ -z "$conflicts" ]; then
+              echo "Upstream merge failed without producing conflicts."
+              exit "$merge_status"
+            fi
+            non_workflow_conflicts=$(printf '%s\n' "$conflicts" | grep -v '^\.github/workflows/' || true)
+            if [ -n "$non_workflow_conflicts" ]; then
+              printf 'Upstream conflicts require manual resolution:\n%s\n' "$non_workflow_conflicts"
               exit 1
             fi
           fi
+
+          # GITHUB_TOKEN cannot update workflow files. Keep this fork's versions.
+          git restore --source=master --staged --worktree -- .github/workflows
+          git add .github/workflows
+          git commit --no-edit
+          git push --force-with-lease origin sync/upstream-master
+
+          pr_number=$(gh api --method GET "repos/${GITHUB_REPOSITORY}/pulls" \
+            -f state=open \
+            -f base=master \
+            -f "head=${GITHUB_REPOSITORY_OWNER}:sync/upstream-master" \
+            --jq '.[0].number // empty')
+          if [ -z "$pr_number" ]; then
+            pr_number=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/pulls" \
+              -f base=master \
+              -f head=sync/upstream-master \
+              -f title="Sync upstream master" \
+              -f body="Syncs this fork with the latest GTNewHorizons/GTNHGradle master." \
+              --jq .number)
+          fi
+
+          head_sha=$(git rev-parse HEAD)
+          for attempt in $(seq 1 30); do
+            pr=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}")
+            remote_head=$(jq -r .head.sha <<<"$pr")
+            mergeable=$(jq -r 'if .mergeable == null then "pending" else .mergeable end' <<<"$pr")
+
+            if [ "$remote_head" = "$head_sha" ] && [ "$mergeable" = "true" ]; then
+              break
+            fi
+            if [ "$remote_head" = "$head_sha" ] && [ "$mergeable" = "false" ]; then
+              echo "GitHub reports that pull request #${pr_number} cannot be merged."
+              exit 1
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              echo "GitHub did not finish checking pull request #${pr_number} in time."
+              exit 1
+            fi
+            sleep 2
+          done
+
+          merge_request=$(gh api --method PUT \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}/merge-async" \
+            -f sha="$head_sha" \
+            -f merge_method=merge \
+            -f merge_action=direct_merge)
+          merge_status=$(jq -r .status <<<"$merge_request")
+
+          if [ "$merge_status" = "merged" ] || [ "$merge_status" = "enqueued" ]; then
+            exit 0
+          fi
+          if [ "$merge_status" != "pending" ]; then
+            echo "Unexpected asynchronous merge status: $merge_status"
+            exit 1
+          fi
+
+          merge_id=$(jq -r .details.uuid <<<"$merge_request")
+          for attempt in $(seq 1 60); do
+            merge_result=$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}/merge-async/${merge_id}")
+            merge_status=$(jq -r .status <<<"$merge_result")
+
+            if [ "$merge_status" = "merged" ] || [ "$merge_status" = "enqueued" ]; then
+              exit 0
+            fi
+            if [ "$merge_status" = "failed" ]; then
+              jq -r .details.message <<<"$merge_result"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          echo "Asynchronous merge did not finish in time."
+          exit 1
