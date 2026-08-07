@@ -22,8 +22,16 @@ Build and run the current mod in a full GTNH client with:
 ./gradlew runFullPack
 ```
 
+Or start a full dedicated server with:
+
+```shell
+./gradlew runFullPackServer
+```
+
 `runFullPack` runs `prepareFullPackClient` automatically. Downloaded files are shared between projects under
 `<GRADLE_USER_HOME>/caches/gtnh/fullpack`.
+`runFullPackServer` likewise runs `prepareFullPackServer`; it does not accept Minecraft's EULA for you.
+Set `fullPack.cleanServerRuntime` to `true` for automated runs that need a fresh server directory. Normal runs keep the EULA, world, and server configuration.
 
 ### Using this fork in a mod repository
 

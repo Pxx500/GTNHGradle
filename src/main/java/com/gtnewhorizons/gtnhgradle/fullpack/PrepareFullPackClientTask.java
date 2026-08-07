@@ -25,6 +25,7 @@ import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.InputFile;
 import org.gradle.api.tasks.InputFiles;
 import org.gradle.api.tasks.Internal;
+import org.gradle.api.tasks.Optional;
 import org.gradle.api.tasks.OutputFile;
 import org.gradle.api.tasks.PathSensitive;
 import org.gradle.api.tasks.PathSensitivity;
@@ -33,7 +34,7 @@ import org.gradle.work.DisableCachingByDefault;
 
 import de.undercouch.gradle.tasks.download.DownloadAction;
 
-/** Resolves the full-pack manifest and materializes a production client runtime. */
+/** Resolves a full-pack manifest and materializes a production runtime. */
 @DisableCachingByDefault(because = "The remote manifest may change without its URL changing")
 public abstract class PrepareFullPackClientTask extends DefaultTask {
 
@@ -52,6 +53,9 @@ public abstract class PrepareFullPackClientTask extends DefaultTask {
     public abstract Property<String> getManifestUrl();
 
     @Input
+    public abstract Property<String> getRuntimeDirectoryName();
+
+    @Input
     public abstract Property<String> getOwner();
 
     @Internal
@@ -66,6 +70,9 @@ public abstract class PrepareFullPackClientTask extends DefaultTask {
 
     @Input
     public abstract Property<Boolean> getPreferMavenLocal();
+
+    @Input
+    public abstract Property<Boolean> getCleanRuntime();
 
     @Internal
     public abstract DirectoryProperty getMavenLocalRepository();
@@ -83,6 +90,11 @@ public abstract class PrepareFullPackClientTask extends DefaultTask {
     @OutputFile
     public abstract RegularFileProperty getRuntimePathFile();
 
+    @Input
+    @Optional
+    public abstract Property<String> getLauncherPatchPath();
+
+    @Optional
     @OutputFile
     public abstract RegularFileProperty getLauncherPatchFile();
 
@@ -108,10 +120,14 @@ public abstract class PrepareFullPackClientTask extends DefaultTask {
                 getLocalModJar().getAsFile()
                     .get()
                     .toPath(),
-                overlays);
-        copyLauncherPatch(runtime);
+                overlays,
+                getRuntimeDirectoryName().get(),
+                getCleanRuntime().get());
+        if (getLauncherPatchFile().isPresent()) {
+            copyLauncherPatch(runtime);
+        }
         writeRuntimePath(runtime);
-        getLogger().lifecycle("Prepared GTNH client at {}", runtime);
+        getLogger().lifecycle("Prepared GTNH {} at {}", getRuntimeDirectoryName().get(), runtime);
     }
 
     private List<FullPackDependencyOverlayPlanner.Artifact> productionArtifacts(
@@ -145,7 +161,7 @@ public abstract class PrepareFullPackClientTask extends DefaultTask {
     }
 
     private void copyLauncherPatch(Path runtime) {
-        final Path source = runtime.resolve(".gtnh/launcher/lwjgl3ify-forgePatches.jar");
+        final Path source = runtime.resolve(getLauncherPatchPath().get());
         final Path destination = getLauncherPatchFile().getAsFile()
             .get()
             .toPath();
