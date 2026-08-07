@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.gradle.api.Action;
 import org.gradle.api.Project;
 import org.gradle.api.GradleException;
 import org.gradle.api.artifacts.Configuration;
@@ -41,10 +42,11 @@ import com.gtnewhorizons.retrofuturagradle.minecraft.MinecraftTasks;
 import com.gtnewhorizons.retrofuturagradle.minecraft.RunMinecraftTask;
 import com.gtnewhorizons.retrofuturagradle.util.Distribution;
 
-/** Adds tasks which run the locally built mod inside a complete GTNH client. */
+/** Adds tasks which run the locally built mod inside a complete GTNH installation. */
 public class FullPackModule implements GTNHModule {
 
     public static final String DEFAULT_MANIFEST_URL = "https://github.com/Pxx500/DreamAssemblerXXL/releases/download/fullpack-daily/daily.json";
+    public static final String DEFAULT_SERVER_MANIFEST_URL = "https://github.com/Pxx500/DreamAssemblerXXL/releases/download/fullpack-daily/daily-server.json";
 
     @Override
     public boolean isEnabled(@NotNull PropertiesConfiguration configuration) {
@@ -57,6 +59,8 @@ public class FullPackModule implements GTNHModule {
             .create("fullPack", FullPackExtension.class);
         extension.getManifestUrl()
             .convention(DEFAULT_MANIFEST_URL);
+        extension.getServerManifestUrl()
+            .convention(DEFAULT_SERVER_MANIFEST_URL);
         extension.getOwner()
             .convention(project.getName());
         extension.getGitHubToken()
@@ -64,6 +68,8 @@ public class FullPackModule implements GTNHModule {
                 project.getProviders()
                     .environmentVariable("GITHUB_TOKEN"));
         extension.getPreferMavenLocal()
+            .convention(false);
+        extension.getCleanServerRuntime()
             .convention(false);
         extension.getCacheDirectory()
             .convention(
@@ -129,9 +135,14 @@ public class FullPackModule implements GTNHModule {
                     .getArtifacts()));
 
         final TaskContainer tasks = project.getTasks();
-        final File runtimePathFile = project.getLayout()
+        final File clientRuntimePathFile = project.getLayout()
             .getBuildDirectory()
             .file("fullpack/client-runtime.path")
+            .get()
+            .getAsFile();
+        final File serverRuntimePathFile = project.getLayout()
+            .getBuildDirectory()
+            .file("fullpack/server-runtime.path")
             .get()
             .getAsFile();
         final File launcherPatch = project.getLayout()
@@ -140,36 +151,58 @@ public class FullPackModule implements GTNHModule {
             .get()
             .getAsFile();
         final TaskProvider<ReobfuscatedJar> reobfJar = tasks.named("reobfJar", ReobfuscatedJar.class);
+        final Action<PrepareFullPackClientTask> configurePrepare = task -> {
+            task.setGroup("GTNH Buildscript");
+            task.getOwner()
+                .set(extension.getOwner());
+            task.getGitHubToken()
+                .set(extension.getGitHubToken());
+            task.getPreferMavenLocal()
+                .set(extension.getPreferMavenLocal());
+            task.getCleanRuntime()
+                .convention(false);
+            task.getCacheDirectory()
+                .set(extension.getCacheDirectory());
+            task.getMavenLocalRepository()
+                .set(new File(System.getProperty("user.home"), ".m2/repository"));
+            task.getProductionOverlayFiles()
+                .from(productionArtifacts.getFiles());
+            task.getProductionOverlayArtifacts()
+                .set(resolvedProductionArtifacts);
+            task.getRequestedProductionModules()
+                .set(project.provider(() -> List.copyOf(requestedProductionModules)));
+            task.getLocalModJar()
+                .set(reobfJar.flatMap(ReobfuscatedJar::getArchiveFile));
+            task.getOutputs()
+                .upToDateWhen(ignored -> false);
+        };
         final TaskProvider<PrepareFullPackClientTask> prepare = tasks
             .register("prepareFullPackClient", PrepareFullPackClientTask.class, task -> {
-                task.setGroup("GTNH Buildscript");
+                configurePrepare.execute(task);
                 task.setDescription("Downloads and assembles a complete GTNH client with the locally built mod");
                 task.getManifestUrl()
                     .set(extension.getManifestUrl());
-                task.getOwner()
-                    .set(extension.getOwner());
-                task.getGitHubToken()
-                    .set(extension.getGitHubToken());
-                task.getPreferMavenLocal()
-                    .set(extension.getPreferMavenLocal());
-                task.getCacheDirectory()
-                    .set(extension.getCacheDirectory());
-                task.getMavenLocalRepository()
-                    .set(new File(System.getProperty("user.home"), ".m2/repository"));
-                task.getProductionOverlayFiles()
-                    .from(productionArtifacts.getFiles());
-                task.getProductionOverlayArtifacts()
-                    .set(resolvedProductionArtifacts);
-                task.getRequestedProductionModules()
-                    .set(project.provider(() -> List.copyOf(requestedProductionModules)));
-                task.getLocalModJar()
-                    .set(reobfJar.flatMap(ReobfuscatedJar::getArchiveFile));
+                task.getRuntimeDirectoryName()
+                    .set("client");
                 task.getRuntimePathFile()
-                    .fileValue(runtimePathFile);
+                    .fileValue(clientRuntimePathFile);
+                task.getLauncherPatchPath()
+                    .set(".gtnh/launcher/lwjgl3ify-forgePatches.jar");
                 task.getLauncherPatchFile()
                     .fileValue(launcherPatch);
-                task.getOutputs()
-                    .upToDateWhen(ignored -> false);
+            });
+        final TaskProvider<PrepareFullPackClientTask> prepareServer = tasks
+            .register("prepareFullPackServer", PrepareFullPackClientTask.class, task -> {
+                configurePrepare.execute(task);
+                task.setDescription("Downloads and assembles a complete GTNH server with the locally built mod");
+                task.getManifestUrl()
+                    .set(extension.getServerManifestUrl());
+                task.getRuntimeDirectoryName()
+                    .set("server");
+                task.getCleanRuntime()
+                    .set(extension.getCleanServerRuntime());
+                task.getRuntimePathFile()
+                    .fileValue(serverRuntimePathFile);
             });
 
         final MinecraftExtension minecraft = project.getExtensions()
@@ -178,36 +211,39 @@ public class FullPackModule implements GTNHModule {
             .getByType(MinecraftTasks.class);
         final MCPTasks mcpTasks = project.getExtensions()
             .getByType(MCPTasks.class);
+        final Action<RunMinecraftTask> configureRun = task -> {
+            task.setup(project);
+            task.getMcExtExtraRunJvmArguments()
+                .set(
+                    minecraft.getExtraRunJvmArguments()
+                        .map(
+                            arguments -> arguments.stream()
+                                .filter(argument -> !argument.equals("-Dmixin.debug.countInjections=true"))
+                                .toList()));
+            task.setGroup("GTNH Buildscript");
+            task.getJavaLauncher()
+                .set(
+                    gtnh.getToolchainService()
+                        .launcherFor(
+                            toolchain -> toolchain.getLanguageVersion()
+                                .set(JavaLanguageVersion.of(17))));
+            @SuppressWarnings("unchecked")
+            final List<String> modernJvmArgs = (List<String>) project.property("modernJvmArgs");
+            task.getExtraJvmArgs()
+                .addAll(modernJvmArgs);
+        };
 
         tasks.register("runFullPack", RunMinecraftTask.class, Distribution.CLIENT)
             .configure(task -> {
                 task.getLwjglVersion()
                     .set(3);
-                task.setup(project);
-                task.getMcExtExtraRunJvmArguments()
-                    .set(
-                        minecraft.getExtraRunJvmArguments()
-                            .map(
-                                arguments -> arguments.stream()
-                                    .filter(argument -> !argument.equals("-Dmixin.debug.countInjections=true"))
-                                    .toList()));
-                task.setGroup("GTNH Buildscript");
+                configureRun.execute(task);
                 task.setDescription("Runs the complete GTNH client with the locally built mod");
                 task.dependsOn(
                     minecraftTasks.getTaskDownloadVanillaJars(),
                     minecraftTasks.getTaskDownloadVanillaAssets(),
                     prepare);
 
-                task.getJavaLauncher()
-                    .set(
-                        gtnh.getToolchainService()
-                            .launcherFor(
-                                toolchain -> toolchain.getLanguageVersion()
-                                    .set(JavaLanguageVersion.of(17))));
-                @SuppressWarnings("unchecked")
-                final List<String> modernJvmArgs = (List<String>) project.property("modernJvmArgs");
-                task.getExtraJvmArgs()
-                    .addAll(modernJvmArgs);
                 task.classpath(mcpTasks.getForgeUniversalConfiguration());
                 task.classpath(minecraftTasks.getVanillaClientLocation());
                 task.classpath(mcpTasks.getPatchedConfiguration());
@@ -224,9 +260,35 @@ public class FullPackModule implements GTNHModule {
                                     : "net.minecraftforge.fml.common.launcher.FMLTweaker"));
                 task.doFirst("select prepared full-pack runtime", currentTask -> {
                     final RunMinecraftTask runTask = (RunMinecraftTask) currentTask;
-                    final File preparedRuntime = readRuntimeDirectory(runtimePathFile);
+                    final File preparedRuntime = readRuntimeDirectory(clientRuntimePathFile);
                     if (!launcherPatch.isFile()) {
                         throw new GradleException("Prepared full-pack runtime is missing " + launcherPatch);
+                    }
+                    runTask.setWorkingDir(preparedRuntime);
+                });
+            });
+        tasks.register("runFullPackServer", RunMinecraftTask.class, Distribution.DEDICATED_SERVER)
+            .configure(task -> {
+                configureRun.execute(task);
+                task.setDescription("Runs the complete GTNH server with the locally built mod");
+                task.dependsOn(prepareServer);
+                task.setClasspath(project.files());
+                task.getMainClass()
+                    .set("-jar");
+                task.getExtraArgs()
+                    .set(List.of());
+                task.getArgumentProviders()
+                    .add(
+                        () -> List.of(
+                            new File(readRuntimeDirectory(serverRuntimePathFile), "lwjgl3ify-forgePatches.jar")
+                                .getAbsolutePath(),
+                            "nogui"));
+                task.doFirst("select prepared full-pack server runtime", currentTask -> {
+                    final RunMinecraftTask runTask = (RunMinecraftTask) currentTask;
+                    final File preparedRuntime = readRuntimeDirectory(serverRuntimePathFile);
+                    final File serverLauncher = new File(preparedRuntime, "lwjgl3ify-forgePatches.jar");
+                    if (!serverLauncher.isFile()) {
+                        throw new GradleException("Prepared full-pack runtime is missing " + serverLauncher);
                     }
                     runTask.setWorkingDir(preparedRuntime);
                 });

@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +35,17 @@ public final class FullPackInstaller {
 
     public Path prepare(FullPackManifest manifest, String currentOwner, Path currentModJar,
         List<FullPackDependencyOverlayPlanner.Overlay> dependencyOverlays) {
+        return prepare(manifest, currentOwner, currentModJar, dependencyOverlays, "client");
+    }
+
+    public Path prepare(FullPackManifest manifest, String currentOwner, Path currentModJar,
+        List<FullPackDependencyOverlayPlanner.Overlay> dependencyOverlays, String runtimeDirectoryName) {
+        return prepare(manifest, currentOwner, currentModJar, dependencyOverlays, runtimeDirectoryName, false);
+    }
+
+    public Path prepare(FullPackManifest manifest, String currentOwner, Path currentModJar,
+        List<FullPackDependencyOverlayPlanner.Overlay> dependencyOverlays, String runtimeDirectoryName,
+        boolean cleanRuntime) {
         if (currentOwner == null || currentOwner.isBlank()) {
             throw new IllegalArgumentException("Current full-pack asset owner is required");
         }
@@ -46,9 +58,16 @@ public final class FullPackInstaller {
             .normalize();
         final Path runtime = resolveInside(
             runsRoot,
-            sanitize(
-                currentOwner) + "/" + checkoutKey(currentModJar) + "/" + "client" + "/" + sanitize(manifest.digest()));
+            sanitize(currentOwner) + "/"
+                + checkoutKey(currentModJar)
+                + "/"
+                + sanitize(runtimeDirectoryName)
+                + "/"
+                + sanitize(manifest.digest()));
         try {
+            if (cleanRuntime) {
+                deleteRuntime(runtime);
+            }
             Files.createDirectories(runtime);
             final String localJarPath = manifest.files()
                 .stream()
@@ -91,6 +110,18 @@ public final class FullPackInstaller {
             return runtime;
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to materialize full-pack runtime", e);
+        }
+    }
+
+    private static void deleteRuntime(Path runtime) throws IOException {
+        if (!Files.exists(runtime)) {
+            return;
+        }
+        try (var paths = Files.walk(runtime)) {
+            for (Path path : paths.sorted(Comparator.reverseOrder())
+                .toList()) {
+                Files.delete(path);
+            }
         }
     }
 

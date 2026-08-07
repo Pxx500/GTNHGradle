@@ -135,6 +135,60 @@ class FullPackInstallerTest {
         assertEquals("second", Files.readString(secondRuntime.resolve("mods/CurrentMod.jar")));
     }
 
+    @Test
+    void clientAndServerUseIsolatedRuntimeDirectories() throws Exception {
+        FullPackManifest manifest = manifest("same-digest", List.of(), List.of(), Map.of());
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("local"));
+        FullPackInstaller installer = installer(temporaryDirectory.resolve("fullpack"));
+
+        Path clientRuntime = installer.prepare(manifest, "CurrentMod", localJar, List.of(), "client");
+        Path serverRuntime = installer.prepare(manifest, "CurrentMod", localJar, List.of(), "server");
+
+        assertNotEquals(clientRuntime, serverRuntime);
+        assertArrayEquals(bytes("local"), Files.readAllBytes(clientRuntime.resolve("mods/CurrentMod.jar")));
+        assertArrayEquals(bytes("local"), Files.readAllBytes(serverRuntime.resolve("mods/CurrentMod.jar")));
+    }
+
+    @Test
+    void cleanRuntimeRemovesServerStateWithoutClearingSharedCache() throws Exception {
+        FullPackManifest manifest = manifest("same-digest", List.of(), List.of(), Map.of());
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("local"));
+        Path cacheRoot = temporaryDirectory.resolve("fullpack");
+        FullPackInstaller installer = installer(cacheRoot);
+        Path runtime = installer.prepare(manifest, "CurrentMod", localJar, List.of(), "server");
+        Files.writeString(runtime.resolve("eula.txt"), "eula=true");
+        Files.createDirectories(runtime.resolve("world"));
+        Files.writeString(runtime.resolve("world/level.dat"), "old world");
+        Path cachedAsset = cacheRoot.resolve("objects/cached-asset");
+        Files.createDirectories(cachedAsset.getParent());
+        Files.writeString(cachedAsset, "cached");
+
+        Path cleanRuntime = installer.prepare(manifest, "CurrentMod", localJar, List.of(), "server", true);
+
+        assertEquals(runtime, cleanRuntime);
+        assertFalse(Files.exists(cleanRuntime.resolve("eula.txt")));
+        assertFalse(Files.exists(cleanRuntime.resolve("world")));
+        assertEquals("cached", Files.readString(cachedAsset));
+        assertArrayEquals(bytes("local"), Files.readAllBytes(cleanRuntime.resolve("mods/CurrentMod.jar")));
+    }
+
+    @Test
+    void serverRuntimePreservesStateByDefault() throws Exception {
+        FullPackManifest manifest = manifest("same-digest", List.of(), List.of(), Map.of());
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("local"));
+        FullPackInstaller installer = installer(temporaryDirectory.resolve("fullpack"));
+        Path runtime = installer.prepare(manifest, "CurrentMod", localJar, List.of(), "server");
+        Files.writeString(runtime.resolve("eula.txt"), "eula=true");
+        Files.createDirectories(runtime.resolve("world"));
+        Files.writeString(runtime.resolve("world/level.dat"), "world");
+
+        Path preparedAgain = installer.prepare(manifest, "CurrentMod", localJar, List.of(), "server");
+
+        assertEquals(runtime, preparedAgain);
+        assertEquals("eula=true", Files.readString(preparedAgain.resolve("eula.txt")));
+        assertEquals("world", Files.readString(preparedAgain.resolve("world/level.dat")));
+    }
+
     private static FullPackManifest manifest(String digest, List<FullPackManifest.File> files,
         List<FullPackManifest.Archive> archives, Map<String, String> textFiles) {
         return new FullPackManifest(digest, files, archives, textFiles);
