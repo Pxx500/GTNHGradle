@@ -220,7 +220,7 @@ public class FullPackModule implements GTNHModule {
                             arguments -> arguments.stream()
                                 .filter(argument -> !argument.equals("-Dmixin.debug.countInjections=true"))
                                 .toList()));
-            task.setGroup("GTNH Buildscript");
+            task.setGroup("Modded Minecraft");
             task.getJavaLauncher()
                 .set(
                     gtnh.getToolchainService()
