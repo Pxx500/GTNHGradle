@@ -57,6 +57,37 @@ class FullPackModuleFunctionalTest {
     }
 
     @Test
+    void fullPackUsesTheMainCheckoutNameForAWorktree() throws IOException {
+        setupProject();
+        Files.writeString(
+            projectDirectory.resolve("settings.gradle.kts"),
+            "\nrootProject.name = \"CropsNH-redstone-power\"\n",
+            StandardOpenOption.APPEND);
+        Path gitDirectory = projectDirectory.resolveSibling("CropsNH/.git");
+        Path worktreeGitDirectory = gitDirectory.resolve("worktrees/CropsNH-redstone-power");
+        Files.createDirectories(worktreeGitDirectory);
+        Files.writeString(projectDirectory.resolve(".git"), "gitdir: " + worktreeGitDirectory);
+        Files.writeString(worktreeGitDirectory.resolve("commondir"), "../..");
+        Files.writeString(projectDirectory.resolve("build.gradle.kts"), """
+
+            tasks.register("verifyFullPackOwner") {
+                doLast {
+                    val prepare = tasks.named<
+                        com.gtnewhorizons.gtnhgradle.fullpack.PrepareFullPackClientTask
+                    >("prepareFullPackClient").get()
+                    check(prepare.owner.get() == "CropsNH")
+                }
+            }
+            """, StandardOpenOption.APPEND);
+
+        BuildResult result = createRunner("verifyFullPackOwner").build();
+
+        assertTrue(
+            result.getOutput()
+                .contains("BUILD SUCCESSFUL"));
+    }
+
+    @Test
     void runFullPackServerBuildsAndPreparesTheLocalProductionJar() throws IOException {
         setupProject();
 
@@ -310,4 +341,5 @@ class FullPackModuleFunctionalTest {
             .withPluginClasspath()
             .withProjectDir(projectDirectory.toFile());
     }
+
 }
