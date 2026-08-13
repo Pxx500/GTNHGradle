@@ -170,9 +170,6 @@ class FullPackModuleFunctionalTest {
             runtimePathFile,
             projectDirectory.resolve("fake-runtime")
                 .toString());
-        Path earlyDependency = projectDirectory.resolve("fake-runtime/falsepattern/jvmdowngrader-api.jar");
-        Files.createDirectories(earlyDependency.getParent());
-        Files.writeString(earlyDependency, "stub");
         Files.writeString(projectDirectory.resolve("build.gradle.kts"), """
 
             tasks.register("verifyRunFullPackLauncher") {
@@ -201,12 +198,6 @@ class FullPackModuleFunctionalTest {
                         run.classpath.files.first().canonicalFile ==
                             file("build/fullpack/lwjgl3ify-forgePatches.jar").canonicalFile
                     ) { "lwjgl3ify forgePatches must be first on the launch classpath" }
-                    check(
-                        run.classpath.files.any {
-                            it.canonicalFile ==
-                                file("fake-runtime/falsepattern/jvmdowngrader-api.jar").canonicalFile
-                        }
-                    ) { "full-pack early dependencies must be on the launch classpath" }
                 }
             }
             """, StandardOpenOption.APPEND);

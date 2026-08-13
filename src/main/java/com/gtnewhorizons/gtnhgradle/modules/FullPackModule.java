@@ -251,11 +251,6 @@ public class FullPackModule implements GTNHModule {
                 task.setClasspath(
                     project.files(launcherPatch)
                         .plus(task.getClasspath()));
-                task.classpath(
-                    project.provider(
-                        () -> project.fileTree(
-                            new File(readRuntimeDirectory(clientRuntimePathFile), "falsepattern"),
-                            tree -> tree.include("*.jar"))));
                 task.getMainClass()
                     .set("com.gtnewhorizons.retrofuturabootstrap.MainStartOnFirstThread");
                 task.getTweakClasses()
@@ -270,6 +265,10 @@ public class FullPackModule implements GTNHModule {
                     if (!launcherPatch.isFile()) {
                         throw new GradleException("Prepared full-pack runtime is missing " + launcherPatch);
                     }
+                    final File[] earlyDependencies = new File(preparedRuntime, "falsepattern").listFiles(
+                        file -> file.isFile() && file.getName()
+                            .endsWith(".jar"));
+                    runTask.classpath((Object[]) earlyDependencies);
                     runTask.setWorkingDir(preparedRuntime);
                 });
             });
