@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -62,7 +63,7 @@ public class FullPackModule implements GTNHModule {
         extension.getServerManifestUrl()
             .convention(DEFAULT_SERVER_MANIFEST_URL);
         extension.getOwner()
-            .convention(project.getName());
+            .convention(checkoutName(project.getProjectDir(), project.getName()));
         extension.getGitHubToken()
             .convention(
                 project.getProviders()
@@ -302,6 +303,39 @@ public class FullPackModule implements GTNHModule {
                     .trim());
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to locate the prepared full-pack runtime", e);
+        }
+    }
+
+    private static String checkoutName(File projectDirectory, String projectName) {
+        final Path gitFile = projectDirectory.toPath()
+            .resolve(".git");
+        if (!Files.isRegularFile(gitFile)) {
+            return projectName;
+        }
+        try {
+            final String gitDirValue = Files.readString(gitFile, StandardCharsets.UTF_8)
+                .trim();
+            if (!gitDirValue.startsWith("gitdir: ")) {
+                return projectName;
+            }
+            Path gitDirectory = Path.of(gitDirValue.substring("gitdir: ".length()));
+            if (!gitDirectory.isAbsolute()) {
+                gitDirectory = projectDirectory.toPath()
+                    .resolve(gitDirectory);
+            }
+            final Path commonDirFile = gitDirectory.resolve("commondir");
+            if (!Files.isRegularFile(commonDirFile)) {
+                return projectName;
+            }
+            final Path commonDirectory = gitDirectory.resolve(
+                Files.readString(commonDirFile, StandardCharsets.UTF_8)
+                    .trim())
+                .normalize();
+            return commonDirectory.getParent()
+                .getFileName()
+                .toString();
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to identify the main Git checkout", e);
         }
     }
 
