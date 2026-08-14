@@ -210,6 +210,35 @@ class FullPackModuleFunctionalTest {
     }
 
     @Test
+    void runFullPackStartsWhenEarlyDependenciesDirectoryDoesNotExist() throws IOException {
+        setupProject();
+        Path launcherPatch = projectDirectory.resolve("build/fullpack/lwjgl3ify-forgePatches.jar");
+        Files.createDirectories(launcherPatch.getParent());
+        Files.writeString(launcherPatch, "launcher");
+        Path runtime = projectDirectory.resolve("fake-runtime");
+        Files.createDirectories(runtime);
+        Files.writeString(projectDirectory.resolve("build/fullpack/client-runtime.path"), runtime.toString());
+        Files.writeString(projectDirectory.resolve("build.gradle.kts"), """
+
+            tasks.register("verifyRunFullPackStartsWithoutEarlyDependencies") {
+                doLast {
+                    val run = tasks.named<com.gtnewhorizons.retrofuturagradle.minecraft.RunMinecraftTask>(
+                        "runFullPack"
+                    ).get()
+                    run.actions.first().execute(run)
+                    check(run.workingDir.canonicalFile == file("fake-runtime").canonicalFile)
+                }
+            }
+            """, StandardOpenOption.APPEND);
+
+        BuildResult result = createRunner("verifyRunFullPackStartsWithoutEarlyDependencies").build();
+
+        assertTrue(
+            result.getOutput()
+                .contains("BUILD SUCCESSFUL"));
+    }
+
+    @Test
     void runFullPackServerUsesProductionDedicatedServerLauncher() throws IOException {
         setupProject();
         Files.writeString(projectDirectory.resolve("gradle.properties"), """
