@@ -265,9 +265,12 @@ public class FullPackModule implements GTNHModule {
                     if (!launcherPatch.isFile()) {
                         throw new GradleException("Prepared full-pack runtime is missing " + launcherPatch);
                     }
-                    final File[] earlyDependencies = new File(preparedRuntime, "falsepattern").listFiles(
-                        file -> file.isFile() && file.getName()
-                            .endsWith(".jar"));
+                    final File earlyDependenciesDirectory = new File(preparedRuntime, "falsepattern");
+                    final File[] earlyDependencies = earlyDependenciesDirectory.isDirectory()
+                        ? earlyDependenciesDirectory.listFiles(
+                            file -> file.isFile() && file.getName()
+                                .endsWith(".jar"))
+                        : new File[0];
                     runTask.classpath((Object[]) earlyDependencies);
                     runTask.setWorkingDir(preparedRuntime);
                 });
