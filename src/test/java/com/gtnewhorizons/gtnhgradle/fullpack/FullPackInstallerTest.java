@@ -11,8 +11,14 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.FileTime;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.zip.ZipEntry;
@@ -136,6 +142,197 @@ class FullPackInstallerTest {
     }
 
     @Test
+    void identicalClientInputsReuseTheCompletedRuntimeWithoutRewritingIt() throws Exception {
+        FullPackManifest manifest = manifest("same-digest", List.of(), List.of(), Map.of());
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("local"));
+        FullPackInstaller installer = installer(temporaryDirectory.resolve("fullpack"));
+        Path runtime = installer.prepare(manifest, "CurrentMod", localJar);
+        Path installedJar = Files.write(runtime.resolve("mods/CurrentMod.jar"), bytes("running copy"));
+        Path runtimeState = Files.writeString(runtime.resolve("options.txt"), "user state");
+
+        Path preparedAgain = installer.prepare(manifest, "CurrentMod", localJar);
+
+        assertEquals(runtime, preparedAgain);
+        assertEquals("running copy", Files.readString(installedJar));
+        assertEquals("user state", Files.readString(runtimeState));
+    }
+
+    @Test
+    void changedLocalModUsesANewRuntimeWithoutTouchingTheOldRuntime() throws Exception {
+        FullPackManifest manifest = manifest("same-digest", List.of(), List.of(), Map.of());
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("first"));
+        FullPackInstaller installer = installer(temporaryDirectory.resolve("fullpack"));
+        Path firstRuntime = installer.prepare(manifest, "CurrentMod", localJar);
+        Path oldRuntimeState = Files.writeString(firstRuntime.resolve("options.txt"), "old state");
+
+        Files.write(localJar, bytes("second"));
+        Path secondRuntime = installer.prepare(manifest, "CurrentMod", localJar);
+
+        assertNotEquals(firstRuntime, secondRuntime);
+        assertEquals("first", Files.readString(firstRuntime.resolve("mods/CurrentMod.jar")));
+        assertEquals("old state", Files.readString(oldRuntimeState));
+        assertEquals("second", Files.readString(secondRuntime.resolve("mods/CurrentMod.jar")));
+    }
+
+    @Test
+    void clientRuntimeUsesOneCombinedIdentityDirectory() throws Exception {
+        FullPackManifest manifest = manifest("manifest-digest", List.of(), List.of(), Map.of());
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("local"));
+
+        Path runtime = installer(temporaryDirectory.resolve("fullpack")).prepare(manifest, "CurrentMod", localJar);
+
+        assertEquals(
+            "client",
+            runtime.getParent()
+                .getFileName()
+                .toString());
+    }
+
+    @Test
+    void expiredInactiveClientRuntimeIsRemoved() throws Exception {
+        FullPackManifest manifest = manifest("same-digest", List.of(), List.of(), Map.of());
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("first"));
+        FullPackInstaller installer = installer(temporaryDirectory.resolve("fullpack"));
+        Path firstRuntime = installer.prepare(manifest, "CurrentMod", localJar);
+        Path lastUsed = lastUsedPath(firstRuntime);
+        Files.writeString(lastUsed, "");
+        Files.setLastModifiedTime(
+            lastUsed,
+            FileTime.from(
+                Instant.now()
+                    .minus(Duration.ofHours(25))));
+
+        Files.write(localJar, bytes("second"));
+        installer.prepare(manifest, "CurrentMod", localJar);
+
+        assertFalse(Files.exists(firstRuntime));
+    }
+
+    @Test
+    void recentlyUsedClientRuntimeIsKept() throws Exception {
+        FullPackManifest manifest = manifest("same-digest", List.of(), List.of(), Map.of());
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("first"));
+        FullPackInstaller installer = installer(temporaryDirectory.resolve("fullpack"));
+        Path firstRuntime = installer.prepare(manifest, "CurrentMod", localJar);
+
+        Files.write(localJar, bytes("second"));
+        installer.prepare(manifest, "CurrentMod", localJar);
+
+        assertTrue(Files.isDirectory(firstRuntime));
+    }
+
+    @Test
+    void expiredActiveClientRuntimeIsKept() throws Exception {
+        FullPackManifest manifest = manifest("same-digest", List.of(), List.of(), Map.of());
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("first"));
+        FullPackInstaller installer = installer(temporaryDirectory.resolve("fullpack"));
+        Path firstRuntime = installer.prepare(manifest, "CurrentMod", localJar);
+        Path lastUsed = lastUsedPath(firstRuntime);
+        Files.setLastModifiedTime(
+            lastUsed,
+            FileTime.from(
+                Instant.now()
+                    .minus(Duration.ofHours(25))));
+
+        Path leasePath = FullPackRuntimeLeaseService.leasePath(firstRuntime);
+        try (
+            FileChannel channel = FileChannel
+                .open(leasePath, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
+            FileLock ignored = channel.lock(0L, Long.MAX_VALUE, true)) {
+            Files.write(localJar, bytes("second"));
+            installer.prepare(manifest, "CurrentMod", localJar);
+        }
+
+        assertTrue(Files.isDirectory(firstRuntime));
+    }
+
+    @Test
+    void changedManifestUsesANewClientRuntime() throws Exception {
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("local"));
+        FullPackInstaller installer = installer(temporaryDirectory.resolve("fullpack"));
+
+        Path firstRuntime = installer
+            .prepare(manifest("first-manifest", List.of(), List.of(), Map.of()), "CurrentMod", localJar);
+        Path secondRuntime = installer
+            .prepare(manifest("second-manifest", List.of(), List.of(), Map.of()), "CurrentMod", localJar);
+
+        assertNotEquals(firstRuntime, secondRuntime);
+    }
+
+    @Test
+    void clientCleanupDoesNotRemoveServerRuntimeOrSharedCache() throws Exception {
+        FullPackManifest manifest = manifest("same-digest", List.of(), List.of(), Map.of());
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("first"));
+        Path cacheRoot = temporaryDirectory.resolve("fullpack");
+        FullPackInstaller installer = installer(cacheRoot);
+        Path serverRuntime = installer.prepare(manifest, "CurrentMod", localJar, List.of(), "server");
+        Path serverLastUsed = serverRuntime.resolveSibling(".last-used-" + serverRuntime.getFileName());
+        Files.writeString(serverLastUsed, "");
+        Files.setLastModifiedTime(
+            serverLastUsed,
+            FileTime.from(
+                Instant.now()
+                    .minus(Duration.ofHours(25))));
+        Path cachedAsset = cacheRoot.resolve("objects/cached-asset");
+        Files.createDirectories(cachedAsset.getParent());
+        Files.writeString(cachedAsset, "cached");
+
+        installer.prepare(manifest, "CurrentMod", localJar);
+
+        assertTrue(Files.isDirectory(serverRuntime));
+        assertEquals("cached", Files.readString(cachedAsset));
+    }
+
+    @Test
+    void changedDependencyOverlayUsesANewRuntime() throws Exception {
+        FullPackManifest manifest = manifest("same-digest", List.of(), List.of(), Map.of());
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("local"));
+        Path dependencyJar = Files.write(temporaryDirectory.resolve("dependency.jar"), bytes("first"));
+        FullPackDependencyOverlayPlanner.Overlay overlay = new FullPackDependencyOverlayPlanner.Overlay(
+            "mods/dependency.jar",
+            dependencyJar);
+        FullPackInstaller installer = installer(temporaryDirectory.resolve("fullpack"));
+        Path firstRuntime = installer.prepare(manifest, "CurrentMod", localJar, List.of(overlay));
+
+        Files.write(dependencyJar, bytes("second"));
+        Path secondRuntime = installer.prepare(manifest, "CurrentMod", localJar, List.of(overlay));
+
+        assertNotEquals(firstRuntime, secondRuntime);
+        assertEquals("first", Files.readString(firstRuntime.resolve("mods/dependency.jar")));
+        assertEquals("second", Files.readString(secondRuntime.resolve("mods/dependency.jar")));
+    }
+
+    @Test
+    void failedClientPreparationCanBeRetried() throws Exception {
+        FullPackManifest brokenManifest = manifest("same-digest", List.of(), List.of(), Map.of("../outside", "bad"));
+        FullPackManifest validManifest = manifest(
+            "same-digest",
+            List.of(),
+            List.of(),
+            Map.of("config/generated.cfg", "good"));
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("local"));
+        FullPackInstaller installer = installer(temporaryDirectory.resolve("fullpack"));
+
+        assertThrows(IllegalArgumentException.class, () -> installer.prepare(brokenManifest, "CurrentMod", localJar));
+        Path runtime = installer.prepare(validManifest, "CurrentMod", localJar);
+
+        assertEquals("good", Files.readString(runtime.resolve("config/generated.cfg")));
+    }
+
+    @Test
+    void dailyFilesRemainHardlinkedFromTheSharedCache() throws Exception {
+        FullPackManifest.File dailyFile = file("OtherMod", "/other.jar", "mods/other.jar", null);
+        FullPackManifest manifest = manifest("same-digest", List.of(dailyFile), List.of(), Map.of());
+        Path cacheRoot = temporaryDirectory.resolve("fullpack");
+        Path cachedFile = cache(cacheRoot, dailyFile, bytes("daily"));
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("local"));
+
+        Path runtime = installer(cacheRoot).prepare(manifest, "CurrentMod", localJar);
+
+        assertTrue(Files.isSameFile(cachedFile, runtime.resolve("mods/other.jar")));
+    }
+
+    @Test
     void clientAndServerUseIsolatedRuntimeDirectories() throws Exception {
         FullPackManifest manifest = manifest("same-digest", List.of(), List.of(), Map.of());
         Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("local"));
@@ -212,13 +409,14 @@ class FullPackInstallerTest {
             FullPackManifest.Authentication.NONE);
     }
 
-    private void cache(Path root, FullPackManifest.Asset asset, byte[] content) throws IOException {
+    private Path cache(Path root, FullPackManifest.Asset asset, byte[] content) throws IOException {
         Path object = new FullPackAssetCache(root, "", new DownloadAction(project), new DownloadAction(project))
             .objectPath(
                 asset.url()
                     .toString());
         Files.createDirectories(object.getParent());
         Files.write(object, content);
+        return object;
     }
 
     private FullPackInstaller installer(Path root) {
@@ -239,5 +437,9 @@ class FullPackInstallerTest {
 
     private static byte[] bytes(String value) {
         return value.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static Path lastUsedPath(Path runtime) {
+        return runtime.resolveSibling(".last-used-" + runtime.getFileName());
     }
 }
