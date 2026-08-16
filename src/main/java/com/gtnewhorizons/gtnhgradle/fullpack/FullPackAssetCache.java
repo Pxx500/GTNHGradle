@@ -17,6 +17,8 @@ import de.undercouch.gradle.tasks.download.DownloadAction;
 /** A shared cache keyed by the asset URL. */
 public final class FullPackAssetCache {
 
+    private static final int HASH_BUFFER_SIZE = 8192;
+
     private final Path root;
     private final String githubToken;
     private final DownloadAction publicDownload;
@@ -142,11 +144,27 @@ public final class FullPackAssetCache {
     }
 
     static String sha256(String value) {
+        final MessageDigest digest = sha256Digest();
+        return java.util.HexFormat.of()
+            .formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    static String sha256(Path path) throws IOException {
+        final MessageDigest digest = sha256Digest();
+        try (var input = Files.newInputStream(path)) {
+            final byte[] buffer = new byte[HASH_BUFFER_SIZE];
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                digest.update(buffer, 0, read);
+            }
+        }
+        return java.util.HexFormat.of()
+            .formatHex(digest.digest());
+    }
+
+    private static MessageDigest sha256Digest() {
         try {
-            return java.util.HexFormat.of()
-                .formatHex(
-                    MessageDigest.getInstance("SHA-256")
-                        .digest(value.getBytes(StandardCharsets.UTF_8)));
+            return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is not available", e);
         }
