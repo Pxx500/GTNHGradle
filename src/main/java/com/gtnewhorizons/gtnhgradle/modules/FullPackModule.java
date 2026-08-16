@@ -24,6 +24,7 @@ import org.gradle.api.artifacts.result.ResolvedArtifactResult;
 import org.gradle.api.attributes.Category;
 import org.gradle.api.attributes.LibraryElements;
 import org.gradle.api.attributes.Usage;
+import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.provider.Provider;
 import org.gradle.api.tasks.TaskContainer;
 import org.gradle.api.tasks.TaskProvider;
@@ -34,6 +35,7 @@ import com.gtnewhorizons.gtnhgradle.GTNHGradlePlugin;
 import com.gtnewhorizons.gtnhgradle.GTNHModule;
 import com.gtnewhorizons.gtnhgradle.PropertiesConfiguration;
 import com.gtnewhorizons.gtnhgradle.fullpack.FullPackExtension;
+import com.gtnewhorizons.gtnhgradle.fullpack.FullPackRuntimeLeaseService;
 import com.gtnewhorizons.gtnhgradle.fullpack.PrepareFullPackClientTask;
 import com.gtnewhorizons.retrofuturagradle.MinecraftExtension;
 import com.gtnewhorizons.retrofuturagradle.ObfuscationAttribute;
@@ -146,12 +148,10 @@ public class FullPackModule implements GTNHModule {
             .file("fullpack/server-runtime.path")
             .get()
             .getAsFile();
-        final File launcherPatch = project.getLayout()
-            .getBuildDirectory()
-            .file("fullpack/lwjgl3ify-forgePatches.jar")
-            .get()
-            .getAsFile();
         final TaskProvider<ReobfuscatedJar> reobfJar = tasks.named("reobfJar", ReobfuscatedJar.class);
+        final Provider<FullPackRuntimeLeaseService> runtimeLease = project.getGradle()
+            .getSharedServices()
+            .registerIfAbsent("fullPackRuntimeLease", FullPackRuntimeLeaseService.class, ignored -> {});
         final Action<PrepareFullPackClientTask> configurePrepare = task -> {
             task.setGroup("GTNH Buildscript");
             task.getOwner()
@@ -187,10 +187,6 @@ public class FullPackModule implements GTNHModule {
                     .set("client");
                 task.getRuntimePathFile()
                     .fileValue(clientRuntimePathFile);
-                task.getLauncherPatchPath()
-                    .set(".gtnh/launcher/lwjgl3ify-forgePatches.jar");
-                task.getLauncherPatchFile()
-                    .fileValue(launcherPatch);
             });
         final TaskProvider<PrepareFullPackClientTask> prepareServer = tasks
             .register("prepareFullPackServer", PrepareFullPackClientTask.class, task -> {
@@ -236,6 +232,9 @@ public class FullPackModule implements GTNHModule {
 
         tasks.register("runFullPack", RunMinecraftTask.class, Distribution.CLIENT)
             .configure(task -> {
+                final ConfigurableFileCollection launcherClasspath = project.getObjects()
+                    .fileCollection();
+                task.usesService(runtimeLease);
                 task.getLwjglVersion()
                     .set(3);
                 configureRun.execute(task);
@@ -248,9 +247,7 @@ public class FullPackModule implements GTNHModule {
                 task.classpath(mcpTasks.getForgeUniversalConfiguration());
                 task.classpath(minecraftTasks.getVanillaClientLocation());
                 task.classpath(mcpTasks.getPatchedConfiguration());
-                task.setClasspath(
-                    project.files(launcherPatch)
-                        .plus(task.getClasspath()));
+                task.setClasspath(launcherClasspath.plus(task.getClasspath()));
                 task.getMainClass()
                     .set("com.gtnewhorizons.retrofuturabootstrap.MainStartOnFirstThread");
                 task.getTweakClasses()
@@ -262,6 +259,7 @@ public class FullPackModule implements GTNHModule {
                 task.doFirst("select prepared full-pack runtime", currentTask -> {
                     final RunMinecraftTask runTask = (RunMinecraftTask) currentTask;
                     final File preparedRuntime = readRuntimeDirectory(clientRuntimePathFile);
+                    final File launcherPatch = new File(preparedRuntime, ".gtnh/launcher/lwjgl3ify-forgePatches.jar");
                     if (!launcherPatch.isFile()) {
                         throw new GradleException("Prepared full-pack runtime is missing " + launcherPatch);
                     }
@@ -272,7 +270,10 @@ public class FullPackModule implements GTNHModule {
                                 .endsWith(".jar"))
                         : new File[0];
                     runTask.classpath((Object[]) earlyDependencies);
+                    launcherClasspath.setFrom(launcherPatch);
                     runTask.setWorkingDir(preparedRuntime);
+                    runtimeLease.get()
+                        .acquire(preparedRuntime.toPath());
                 });
             });
         tasks.register("runFullPackServer", RunMinecraftTask.class, Distribution.DEDICATED_SERVER)

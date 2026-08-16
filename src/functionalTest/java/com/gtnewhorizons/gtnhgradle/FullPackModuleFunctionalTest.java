@@ -161,15 +161,13 @@ class FullPackModuleFunctionalTest {
             mixinsPackage = mixin.mixins
             """, StandardOpenOption.APPEND);
         Files.createDirectories(projectDirectory.resolve("src/main/java/com/myname/mymodid/mixin/mixins"));
-        Path launcherPatch = projectDirectory.resolve("build/fullpack/lwjgl3ify-forgePatches.jar");
+        Path runtime = projectDirectory.resolve("fake-runtime");
+        Path launcherPatch = runtime.resolve(".gtnh/launcher/lwjgl3ify-forgePatches.jar");
         Files.createDirectories(launcherPatch.getParent());
         Files.writeString(launcherPatch, "launcher");
         Path runtimePathFile = projectDirectory.resolve("build/fullpack/client-runtime.path");
         Files.createDirectories(runtimePathFile.getParent());
-        Files.writeString(
-            runtimePathFile,
-            projectDirectory.resolve("fake-runtime")
-                .toString());
+        Files.writeString(runtimePathFile, runtime.toString());
         Files.writeString(projectDirectory.resolve("build.gradle.kts"), """
 
             tasks.register("verifyRunFullPackLauncher") {
@@ -194,9 +192,10 @@ class FullPackModuleFunctionalTest {
                     check(
                         !run.calculateJvmArgs().contains("-Dmixin.debug.countInjections=true")
                     ) { "runFullPack must not enable development-only Mixin injection validation" }
+                    run.actions.first().execute(run)
                     check(
                         run.classpath.files.first().canonicalFile ==
-                            file("build/fullpack/lwjgl3ify-forgePatches.jar").canonicalFile
+                            file("fake-runtime/.gtnh/launcher/lwjgl3ify-forgePatches.jar").canonicalFile
                     ) { "lwjgl3ify forgePatches must be first on the launch classpath" }
                 }
             }
@@ -212,12 +211,13 @@ class FullPackModuleFunctionalTest {
     @Test
     void runFullPackStartsWhenEarlyDependenciesDirectoryDoesNotExist() throws IOException {
         setupProject();
-        Path launcherPatch = projectDirectory.resolve("build/fullpack/lwjgl3ify-forgePatches.jar");
+        Path runtime = projectDirectory.resolve("fake-runtime");
+        Path launcherPatch = runtime.resolve(".gtnh/launcher/lwjgl3ify-forgePatches.jar");
         Files.createDirectories(launcherPatch.getParent());
         Files.writeString(launcherPatch, "launcher");
-        Path runtime = projectDirectory.resolve("fake-runtime");
-        Files.createDirectories(runtime);
-        Files.writeString(projectDirectory.resolve("build/fullpack/client-runtime.path"), runtime.toString());
+        Path runtimePathFile = projectDirectory.resolve("build/fullpack/client-runtime.path");
+        Files.createDirectories(runtimePathFile.getParent());
+        Files.writeString(runtimePathFile, runtime.toString());
         Files.writeString(projectDirectory.resolve("build.gradle.kts"), """
 
             tasks.register("verifyRunFullPackStartsWithoutEarlyDependencies") {

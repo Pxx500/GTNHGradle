@@ -5,7 +5,6 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -25,7 +24,6 @@ import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.InputFile;
 import org.gradle.api.tasks.InputFiles;
 import org.gradle.api.tasks.Internal;
-import org.gradle.api.tasks.Optional;
 import org.gradle.api.tasks.OutputFile;
 import org.gradle.api.tasks.PathSensitive;
 import org.gradle.api.tasks.PathSensitivity;
@@ -90,14 +88,6 @@ public abstract class PrepareFullPackClientTask extends DefaultTask {
     @OutputFile
     public abstract RegularFileProperty getRuntimePathFile();
 
-    @Input
-    @Optional
-    public abstract Property<String> getLauncherPatchPath();
-
-    @Optional
-    @OutputFile
-    public abstract RegularFileProperty getLauncherPatchFile();
-
     @TaskAction
     public void prepareClient() {
         final FullPackManifest manifest = FullPackManifestParser.parse(downloadManifest());
@@ -123,9 +113,6 @@ public abstract class PrepareFullPackClientTask extends DefaultTask {
                 overlays,
                 getRuntimeDirectoryName().get(),
                 getCleanRuntime().get());
-        if (getLauncherPatchFile().isPresent()) {
-            copyLauncherPatch(runtime);
-        }
         writeRuntimePath(runtime);
         getLogger().lifecycle("Prepared GTNH {} at {}", getRuntimeDirectoryName().get(), runtime);
     }
@@ -158,22 +145,6 @@ public abstract class PrepareFullPackClientTask extends DefaultTask {
             throw new IllegalArgumentException("Invalid full-pack Maven module coordinates: " + coordinates);
         }
         return new FullPackManifest.MavenModule(parts[0], parts[1], parts[2]);
-    }
-
-    private void copyLauncherPatch(Path runtime) {
-        final Path source = runtime.resolve(getLauncherPatchPath().get());
-        final Path destination = getLauncherPatchFile().getAsFile()
-            .get()
-            .toPath();
-        if (!Files.isRegularFile(source)) {
-            throw new GradleException("Prepared full-pack runtime is missing " + source);
-        }
-        try {
-            Files.createDirectories(destination.getParent());
-            Files.copy(source, destination, StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException e) {
-            throw new UncheckedIOException("Failed to stage the full-pack launcher patch", e);
-        }
     }
 
     private String downloadManifest() {
