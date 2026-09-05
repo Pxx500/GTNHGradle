@@ -253,6 +253,7 @@ public class FullPackModule implements GTNHModule {
                 task.classpath(mcpTasks.getForgeUniversalConfiguration());
                 task.classpath(minecraftTasks.getVanillaClientLocation());
                 task.classpath(mcpTasks.getPatchedConfiguration());
+                task.classpath(JVMDowngraderModule.getDowngradedApiConfiguration(project, 17));
                 task.getMainClass()
                     .set("com.gtnewhorizons.retrofuturabootstrap.MainStartOnFirstThread");
                 task.getTweakClasses()

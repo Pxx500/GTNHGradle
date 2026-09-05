@@ -237,9 +237,13 @@ public class JVMDowngraderModule implements GTNHModule {
         }
     }
 
-    private Configuration createDowngradedApiConfiguration(Project project, ConfigurationContainer cfgs,
-        int downgradeTarget) {
+    static Configuration getDowngradedApiConfiguration(Project project, int downgradeTarget) {
+        final ConfigurationContainer cfgs = project.getConfigurations();
         final String configName = "jvmdgApiForJava" + downgradeTarget;
+        final Configuration existing = cfgs.findByName(configName);
+        if (existing != null) {
+            return existing;
+        }
         return cfgs.create(configName, config -> {
             config.setDescription("JVM Downgrader API jar for Java " + downgradeTarget);
             config.setCanBeConsumed(false);
@@ -463,7 +467,7 @@ public class JVMDowngraderModule implements GTNHModule {
         ConfigurationContainer cfgs, TaskProvider<DowngradeJar> downgradeJar, int downgradeTarget,
         JavaVersion targetVersion) {
 
-        final FileCollection jvmdgApiFiles = createDowngradedApiConfiguration(project, cfgs, downgradeTarget);
+        final FileCollection jvmdgApiFiles = getDowngradedApiConfiguration(project, downgradeTarget);
 
         final TaskProvider<ShadeJar> shadeDowngradedApi = tasks.named(SHADE_DOWNGRADED_API_TASK, ShadeJar.class);
         shadeDowngradedApi.configure(task -> {

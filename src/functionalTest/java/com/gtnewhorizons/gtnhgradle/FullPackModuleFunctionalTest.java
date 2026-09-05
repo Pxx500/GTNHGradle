@@ -274,7 +274,8 @@ class FullPackModuleFunctionalTest {
         Files.writeString(main, """
             package com.gtnewhorizons.retrofuturabootstrap;
             public class MainStartOnFirstThread {
-                public static void main(String[] args) {
+                public static void main(String[] args) throws Exception {
+                    Class.forName("xyz.wagyourtail.jvmdg.j18.stub.java_base.J_L_System");
                     System.out.println("prepared bootstrap launched");
                 }
             }
