@@ -1,11 +1,19 @@
 package com.gtnewhorizons.gtnhgradle;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
+
+import javax.tools.ToolProvider;
 
 import org.gradle.testkit.runner.BuildResult;
 import org.gradle.testkit.runner.GradleRunner;
@@ -13,6 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import com.gtnewhorizons.retrofuturagradle.shadow.com.google.common.collect.ImmutableMap;
+import com.sun.net.httpserver.HttpServer;
 
 class FullPackModuleFunctionalTest {
 
@@ -37,6 +46,20 @@ class FullPackModuleFunctionalTest {
         assertTrue(
             result.getOutput()
                 .contains("runFullPackServer"));
+    }
+
+    @Test
+    void disablingModernJavaKeepsOrdinaryTasksAvailable() throws IOException {
+        setupProject();
+
+        BuildResult result = createRunner("tasks", "--all", "-Pgtnh.modules.modernJava=false").build();
+
+        assertTrue(
+            result.getOutput()
+                .contains("runClient"));
+        assertFalse(
+            result.getOutput()
+                .contains("runFullPack"));
     }
 
     @Test
@@ -239,6 +262,66 @@ class FullPackModuleFunctionalTest {
     }
 
     @Test
+    void runFullPackLaunchesThePreparedBootstrapWithConfigurationCache() throws IOException {
+        setupProject();
+        Path runtime = projectDirectory.resolve("fake-runtime");
+        Path launcherPatch = runtime.resolve(".gtnh/launcher/lwjgl3ify-forgePatches.jar");
+        Files.createDirectories(launcherPatch.getParent());
+        Path source = projectDirectory.resolve("bootstrap-source");
+        Files.createDirectories(source);
+        Path main = source.resolve("MainStartOnFirstThread.java");
+        Path loader = source.resolve("RfbSystemClassLoader.java");
+        Files.writeString(main, """
+            package com.gtnewhorizons.retrofuturabootstrap;
+            public class MainStartOnFirstThread {
+                public static void main(String[] args) {
+                    System.out.println("prepared bootstrap launched");
+                }
+            }
+            """);
+        Files.writeString(loader, """
+            package com.gtnewhorizons.retrofuturabootstrap;
+            public class RfbSystemClassLoader extends ClassLoader {
+                public RfbSystemClassLoader(ClassLoader parent) { super(parent); }
+            }
+            """);
+        assertEquals(
+            0,
+            ToolProvider.getSystemJavaCompiler()
+                .run(null, null, null, "--release", "17", "-d", source.toString(), main.toString(), loader.toString()));
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(launcherPatch))) {
+            for (String name : new String[] { "MainStartOnFirstThread", "RfbSystemClassLoader" }) {
+                String entry = "com/gtnewhorizons/retrofuturabootstrap/" + name + ".class";
+                jar.putNextEntry(new JarEntry(entry));
+                Files.copy(source.resolve(entry), jar);
+                jar.closeEntry();
+            }
+        }
+        Path runtimePathFile = projectDirectory.resolve("build/fullpack/client-runtime.path");
+        Files.createDirectories(runtimePathFile.getParent());
+        Files.writeString(runtimePathFile, runtime.toString());
+        Files.writeString(projectDirectory.resolve("build.gradle.kts"), """
+
+            tasks.named("runFullPack") {
+                setDependsOn(emptyList<Any>())
+            }
+            """, StandardOpenOption.APPEND);
+
+        String[] arguments = { "runFullPack", "--configuration-cache", "-Pgtnh.modules.updater=false" };
+        BuildResult first = createRunner(arguments).build();
+        assertTrue(
+            first.getOutput()
+                .contains("prepared bootstrap launched"));
+        BuildResult reused = createRunner(arguments).build();
+        assertTrue(
+            reused.getOutput()
+                .contains("Reusing configuration cache"));
+        assertTrue(
+            reused.getOutput()
+                .contains("prepared bootstrap launched"));
+    }
+
+    @Test
     void runFullPackServerUsesProductionDedicatedServerLauncher() throws IOException {
         setupProject();
         Files.writeString(projectDirectory.resolve("gradle.properties"), """
@@ -296,6 +379,74 @@ class FullPackModuleFunctionalTest {
         assertTrue(
             result.getOutput()
                 .contains("BUILD SUCCESSFUL"));
+    }
+
+    @Test
+    void customMavenLocalRepositoryOverridesDailyWithConfigurationCache() throws IOException {
+        setupProject();
+        Path repository = projectDirectory.resolve("custom-maven-local");
+        Path versionDirectory = repository.resolve("example/OtherMod/1.0");
+        Files.createDirectories(versionDirectory);
+        Files.writeString(versionDirectory.resolve("OtherMod-1.0.jar"), "local dependency");
+        Files.writeString(versionDirectory.resolve("OtherMod-1.0.module"), """
+            {"variants": [{
+                "name": "reobfElements",
+                "attributes": {"com.gtnewhorizons.retrofuturagradle.obfuscation": "srg"},
+                "files": [{"name": "OtherMod-1.0.jar"}]
+            }]}
+            """);
+        Files.writeString(projectDirectory.resolve("local-mod.jar"), "local mod");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        int port = server.getAddress()
+            .getPort();
+        String manifest = """
+            {"version": 1, "files": [{
+                "owner": "OtherMod", "path": "mods/other.jar",
+                "maven": "example:OtherMod:2.0", "url": "http://127.0.0.1:%d/daily.jar"
+            }]}
+            """.formatted(port);
+        server.createContext("/", exchange -> {
+            byte[] response = (exchange.getRequestURI()
+                .getPath()
+                .equals("/manifest.json") ? manifest : "daily dependency").getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            try (var body = exchange.getResponseBody()) {
+                body.write(response);
+            }
+        });
+        server.start();
+        try {
+            Files.writeString(projectDirectory.resolve("build.gradle.kts"), """
+
+                fullPack {
+                    manifestUrl.set("http://127.0.0.1:%d/manifest.json")
+                    preferMavenLocal.set(true)
+                    cacheDirectory.set(layout.projectDirectory.dir("fullpack-cache"))
+                }
+                tasks.named<com.gtnewhorizons.gtnhgradle.fullpack.PrepareFullPackClientTask>(
+                    "prepareFullPackClient"
+                ) {
+                    localModJar.set(layout.projectDirectory.file("local-mod.jar"))
+                    productionOverlayFiles.setFrom(emptyList<Any>())
+                    productionOverlayArtifacts.set(emptyMap())
+                    requestedProductionModules.set(listOf("example:OtherMod:1.0"))
+                }
+                check(repositories.none { it.name == "MavenLocal" })
+                """.formatted(port), StandardOpenOption.APPEND);
+            String[] arguments = { "prepareFullPackClient", "--configuration-cache", "-Pgtnh.modules.updater=false",
+                "-Dmaven.repo.local=" + repository };
+            createRunner(arguments).build();
+            Path runtime = Path.of(Files.readString(projectDirectory.resolve("build/fullpack/client-runtime.path")));
+            assertEquals("local dependency", Files.readString(runtime.resolve("mods/other.jar")));
+
+            BuildResult reused = createRunner(arguments).build();
+            assertTrue(
+                reused.getOutput()
+                    .contains("Reusing configuration cache"));
+            assertEquals("local dependency", Files.readString(runtime.resolve("mods/other.jar")));
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test

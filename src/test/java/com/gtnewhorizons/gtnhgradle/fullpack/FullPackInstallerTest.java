@@ -260,6 +260,39 @@ class FullPackInstallerTest {
     }
 
     @Test
+    void longSessionGetsAFullRetentionPeriodAfterItEnds() throws Exception {
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("first"));
+        FullPackInstaller installer = installer(temporaryDirectory.resolve("fullpack"));
+        FullPackManifest manifest = manifest("same-digest", List.of(), List.of(), Map.of());
+        Path runtime = installer.prepare(manifest, "CurrentMod", localJar);
+        FullPackRuntimeLeaseService lease = new FullPackRuntimeLeaseService() {
+
+            @Override
+            public org.gradle.api.services.BuildServiceParameters.None getParameters() {
+                return null;
+            }
+        };
+        lease.acquire(runtime);
+        Files.setLastModifiedTime(
+            lastUsedPath(runtime),
+            FileTime.from(
+                Instant.now()
+                    .minus(Duration.ofHours(25))));
+
+        lease.close();
+        Files.write(localJar, bytes("second"));
+        installer.prepare(manifest, "CurrentMod", localJar);
+
+        assertTrue(Files.isDirectory(runtime));
+        assertTrue(
+            Files.getLastModifiedTime(lastUsedPath(runtime))
+                .toInstant()
+                .isAfter(
+                    Instant.now()
+                        .minusSeconds(60)));
+    }
+
+    @Test
     void clientCleanupDoesNotRemoveServerRuntimeOrSharedCache() throws Exception {
         FullPackManifest manifest = manifest("same-digest", List.of(), List.of(), Map.of());
         Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("first"));
