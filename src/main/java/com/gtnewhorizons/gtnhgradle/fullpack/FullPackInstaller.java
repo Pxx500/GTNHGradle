@@ -133,7 +133,7 @@ public final class FullPackInstaller {
         return runtime.resolveSibling(LAST_USED_PREFIX + runtime.getFileName());
     }
 
-    private static void recordLastUsed(Path runtime) throws IOException {
+    static void recordLastUsed(Path runtime) throws IOException {
         Files.writeString(
             lastUsedPath(runtime),
             "",

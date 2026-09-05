@@ -6,8 +6,8 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import org.gradle.api.services.BuildService;
 import org.gradle.api.services.BuildServiceParameters;
@@ -17,9 +17,12 @@ public abstract class FullPackRuntimeLeaseService implements BuildService<BuildS
 
     private static final long LOCK_START = 0L;
 
-    private final List<FileChannel> channels = new ArrayList<>();
+    private final Map<Path, FileChannel> channels = new LinkedHashMap<>();
 
     public synchronized void acquire(Path runtime) {
+        if (channels.containsKey(runtime)) {
+            return;
+        }
         final Path leaseFile = leasePath(runtime);
         try {
             Files.createDirectories(leaseFile.getParent());
@@ -27,7 +30,7 @@ public abstract class FullPackRuntimeLeaseService implements BuildService<BuildS
                 .open(leaseFile, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
             try {
                 channel.lock(LOCK_START, Long.MAX_VALUE, true);
-                channels.add(channel);
+                channels.put(runtime, channel);
             } catch (IOException | RuntimeException e) {
                 channel.close();
                 throw e;
@@ -44,8 +47,10 @@ public abstract class FullPackRuntimeLeaseService implements BuildService<BuildS
     @Override
     public synchronized void close() {
         try {
-            for (FileChannel channel : channels) {
-                channel.close();
+            for (Map.Entry<Path, FileChannel> entry : channels.entrySet()) {
+                try (FileChannel channel = entry.getValue()) {
+                    FullPackInstaller.recordLastUsed(entry.getKey());
+                }
             }
             channels.clear();
         } catch (IOException e) {
