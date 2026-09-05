@@ -21,6 +21,7 @@ import org.gradle.api.artifacts.DependencyArtifact;
 import org.gradle.api.artifacts.ExternalModuleDependency;
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier;
 import org.gradle.api.artifacts.result.ResolvedArtifactResult;
+import org.gradle.api.artifacts.repositories.MavenArtifactRepository;
 import org.gradle.api.attributes.Category;
 import org.gradle.api.attributes.LibraryElements;
 import org.gradle.api.attributes.Usage;
@@ -53,7 +54,7 @@ public class FullPackModule implements GTNHModule {
 
     @Override
     public boolean isEnabled(@NotNull PropertiesConfiguration configuration) {
-        return true;
+        return configuration.moduleModernJava;
     }
 
     @Override
@@ -149,6 +150,11 @@ public class FullPackModule implements GTNHModule {
             .get()
             .getAsFile();
         final TaskProvider<ReobfuscatedJar> reobfJar = tasks.named("reobfJar", ReobfuscatedJar.class);
+        final MavenArtifactRepository mavenLocal = project.getRepositories()
+            .mavenLocal();
+        project.getRepositories()
+            .remove(mavenLocal);
+        final File mavenLocalDirectory = new File(mavenLocal.getUrl());
         final Provider<FullPackRuntimeLeaseService> runtimeLease = project.getGradle()
             .getSharedServices()
             .registerIfAbsent("fullPackRuntimeLease", FullPackRuntimeLeaseService.class, ignored -> {});
@@ -165,7 +171,7 @@ public class FullPackModule implements GTNHModule {
             task.getCacheDirectory()
                 .set(extension.getCacheDirectory());
             task.getMavenLocalRepository()
-                .set(new File(System.getProperty("user.home"), ".m2/repository"));
+                .set(mavenLocalDirectory);
             task.getProductionOverlayFiles()
                 .from(productionArtifacts.getFiles());
             task.getProductionOverlayArtifacts()
@@ -247,7 +253,6 @@ public class FullPackModule implements GTNHModule {
                 task.classpath(mcpTasks.getForgeUniversalConfiguration());
                 task.classpath(minecraftTasks.getVanillaClientLocation());
                 task.classpath(mcpTasks.getPatchedConfiguration());
-                task.setClasspath(launcherClasspath.plus(task.getClasspath()));
                 task.getMainClass()
                     .set("com.gtnewhorizons.retrofuturabootstrap.MainStartOnFirstThread");
                 task.getTweakClasses()
@@ -271,6 +276,7 @@ public class FullPackModule implements GTNHModule {
                         : new File[0];
                     runTask.classpath((Object[]) earlyDependencies);
                     launcherClasspath.setFrom(launcherPatch);
+                    runTask.setClasspath(launcherClasspath.plus(runTask.getClasspath()));
                     runTask.setWorkingDir(preparedRuntime);
                     runtimeLease.get()
                         .acquire(preparedRuntime.toPath());
