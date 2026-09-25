@@ -28,6 +28,10 @@ public final class FullPackInstaller {
     private static final Duration CLIENT_RUNTIME_RETENTION = Duration.ofHours(24);
     private static final int CLIENT_METADATA_DEPTH = 4;
     private static final String LAST_USED_PREFIX = ".last-used-";
+    private static final List<String> CLIENT_SOUND_DEFAULTS = List.of(
+        "soundCategory_master:0.5",
+        "soundCategory_music:0.1",
+        "soundCategory_weather:0.0");
 
     private final Path root;
     private final FullPackAssetCache assetCache;
@@ -121,6 +125,7 @@ public final class FullPackInstaller {
             deleteRuntime(runtime);
             Files.createDirectories(runtime);
             materialize(manifest, currentOwner, currentModJar, dependencyOverlays, runtime);
+            applyClientSoundDefaults(runtime);
             Files.createDirectories(prepared.getParent());
             Files.writeString(prepared, "", StandardCharsets.UTF_8);
             recordLastUsed(runtime);
@@ -296,6 +301,35 @@ public final class FullPackInstaller {
             final Path destination = resolveInside(runtime, textFile.getKey());
             Files.createDirectories(destination.getParent());
             Files.writeString(destination, textFile.getValue(), StandardCharsets.UTF_8);
+        }
+    }
+
+    private static void applyClientSoundDefaults(Path runtime) throws IOException {
+        final Path options = runtime.resolve("options.txt");
+        final List<String> lines = Files.isRegularFile(options)
+            ? new ArrayList<>(Files.readAllLines(options, StandardCharsets.UTF_8))
+            : new ArrayList<>();
+        for (String setting : CLIENT_SOUND_DEFAULTS) {
+            final String key = setting.substring(0, setting.indexOf(':') + 1);
+            boolean found = false;
+            for (int i = 0; i < lines.size(); i++) {
+                if (lines.get(i)
+                    .startsWith(key)) {
+                    lines.set(i, setting);
+                    found = true;
+                }
+            }
+            if (!found) {
+                lines.add(setting);
+            }
+        }
+
+        final Path replacement = Files.createTempFile(runtime, "options-", ".tmp");
+        try {
+            Files.write(replacement, lines, StandardCharsets.UTF_8);
+            Files.move(replacement, options, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(replacement);
         }
     }
 
