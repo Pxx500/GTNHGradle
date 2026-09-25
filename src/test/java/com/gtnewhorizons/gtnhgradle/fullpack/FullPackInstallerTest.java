@@ -112,14 +112,20 @@ class FullPackInstallerTest {
         cache(
             cacheRoot,
             configArchive,
-            zip(Map.of("options.txt", bytes("fov:0.0\nlang:en_US\nsoundCategory_master:1.0\nsoundCategory_music:1.0\n"))));
+            zip(
+                Map.of(
+                    "options.txt",
+                    bytes("fov:0.0\nlang:en_US\nsoundCategory_master:1.0\nsoundCategory_music:1.0\n"))));
         Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("local"));
         Path overrides = temporaryDirectory.resolve("user-settings/options.txt");
 
-        Path runtime = installer(cacheRoot).prepare(manifest, "CurrentMod", localJar, List.of(), "client", false, overrides);
+        Path runtime = installer(cacheRoot)
+            .prepare(manifest, "CurrentMod", localJar, List.of(), "client", false, overrides);
         String options = Files.readString(runtime.resolve("options.txt"));
 
-        assertTrue(Files.readString(overrides).contains("fov:1.0"));
+        assertTrue(
+            Files.readString(overrides)
+                .contains("fov:1.0"));
         assertTrue(options.contains("fov:1.0"));
         assertTrue(options.contains("guiScale:2"));
         assertTrue(options.contains("lang:en_US"));

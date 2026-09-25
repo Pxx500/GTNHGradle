@@ -16,6 +16,7 @@ import com.modrinth.minotaur.dependencies.VersionDependency;
 import masecla.modrinth4j.client.agent.UserAgent;
 import masecla.modrinth4j.main.ModrinthAPI;
 import masecla.modrinth4j.model.version.ProjectVersion;
+import net.darkhax.curseforgegradle.Constants;
 import net.darkhax.curseforgegradle.CurseForgeGradlePlugin;
 import net.darkhax.curseforgegradle.TaskPublishCurseForge;
 import org.gradle.api.Project;
@@ -31,8 +32,11 @@ import org.jetbrains.annotations.NotNull;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 
@@ -91,7 +95,7 @@ public class PublishingModule implements GTNHModule {
             }
         }
 
-        final File changelogFile = new File(ObjectUtils.firstNonNull(System.getenv("CHANGELOG_FILE"), "CHANGELOG.md"));
+        final String changelog = getChangelog(project);
 
         // Modrinth
         final String mrToken = System.getenv("MODRINTH_TOKEN");
@@ -110,10 +114,9 @@ public class PublishingModule implements GTNHModule {
                 .set(modVersion);
             mr.getVersionType()
                 .set(modVersion.map(v -> v.endsWith("-pre") ? "beta" : "release"));
-            if (changelogFile.exists()) {
-                final String contents = Files.readString(changelogFile.toPath(), StandardCharsets.UTF_8);
+            if (changelog != null) {
                 mr.getChangelog()
-                    .set(contents);
+                    .set(changelog);
             }
             mr.getUploadFile()
                 .set(project.provider(() -> project.property("publishableObfJar")));
@@ -170,6 +173,7 @@ public class PublishingModule implements GTNHModule {
         // Curseforge
         final String cfToken = System.getenv("CURSEFORGE_TOKEN");
         if (!gtnh.configuration.curseForgeProjectId.isEmpty()) {
+            final Set<String> environments = parseCurseForgeEnvironments(gtnh.configuration.curseForgeEnvironments);
             project.getPlugins()
                 .apply(CurseForgeGradlePlugin.class);
             final TaskProvider<TaskPublishCurseForge> publishCurseforge = project.getTasks()
@@ -188,13 +192,15 @@ public class PublishingModule implements GTNHModule {
                     task.apiToken = cfToken;
                     task.disableVersionDetection();
                     task.upload(gtnh.configuration.curseForgeProjectId, obfFile, artifact -> {
-                        if (changelogFile.exists()) {
-                            artifact.changelogType = "markdown";
-                            artifact.changelog = changelogFile;
+                        if (changelog != null) {
+                            artifact.changelogType = Constants.CHANGELOG_MARKDOWN;
+                            artifact.changelog = changelog;
                         }
-                        artifact.releaseType = modVersion.map(v -> v.endsWith("-pre") ? "beta" : "release");
-                        artifact.addGameVersion(gtnh.configuration.minecraftVersion, "Forge");
+                        artifact.releaseType = modVersion.map(
+                            v -> v.endsWith("-pre") ? Constants.RELEASE_TYPE_BETA : Constants.RELEASE_TYPE_RELEASE);
+                        artifact.addGameVersion(gtnh.configuration.minecraftVersion);
                         artifact.addModLoader("Forge");
+                        artifact.addEnvironment(environments.toArray());
 
                         if (!gtnh.configuration.curseForgeRelations.isEmpty()) {
                             final String[] deps = gtnh.configuration.curseForgeRelations.split(";");
@@ -208,7 +214,7 @@ public class PublishingModule implements GTNHModule {
                             }
                         }
                         if (gtnh.configuration.usesMixins) {
-                            artifact.addRelation("unimixins", "requiredDependency");
+                            artifact.addRelation("unimixins", Constants.RELATION_REQUIRED);
                         }
 
                         for (final Object secondary : getSecondaryArtifacts(project, gtnh)) {
@@ -217,7 +223,9 @@ public class PublishingModule implements GTNHModule {
                                 .getArchiveFile()
                                 .get()
                                 .getAsFile();
-                            artifact.withAdditionalFile(secondaryFile);
+                            // Work around child validation in CurseForgeGradle 1.3.33; omitted from upload metadata.
+                            // Remove once https://github.com/Darkhax/CurseForgeGradle/issues/35 is fixed upstream.
+                            artifact.withAdditionalFile(secondaryFile).gameVersions.addAll(artifact.gameVersions);
                         }
                     });
                 });
@@ -227,6 +235,39 @@ public class PublishingModule implements GTNHModule {
                     .configure(task -> task.dependsOn(publishCurseforge));
             }
         }
+    }
+
+    private static String getChangelog(@NotNull Project project) throws Throwable {
+        Path changelogPath = project.getProjectDir()
+            .toPath()
+            .resolve(ObjectUtils.firstNonNull(System.getenv("CHANGELOG_FILE"), "CHANGELOG.md"));
+        if (Files.isRegularFile(changelogPath)) return Files.readString(changelogPath, StandardCharsets.UTF_8);
+
+        return null;
+    }
+
+    private static Set<String> parseCurseForgeEnvironments(String value) {
+        final Set<String> environments = new LinkedHashSet<>();
+        for (String entry : value.toLowerCase(Locale.ROOT)
+            .split(",")) {
+            entry = entry.trim();
+            if (entry.isEmpty()) {
+                continue;
+            }
+            final String environment = switch (entry) {
+                case "client" -> "Client";
+                case "server" -> "Server";
+                default -> throw new IllegalArgumentException(
+                    "Invalid curseForgeEnvironments entry: '" + entry + "'. Valid values are: client, server.");
+            };
+            environments.add(environment);
+        }
+        if (environments.isEmpty()) {
+            throw new IllegalArgumentException(
+                "Invalid curseForgeEnvironments: '" + value
+                    + "'. Must contain at least one environment: client or server.");
+        }
+        return environments;
     }
 
     private static final Set<String> VALID_MODRINTH_SCOPES = ImmutableSet

@@ -190,7 +190,11 @@ public class FullPackModule implements GTNHModule {
                 task.getManifestUrl()
                     .set(extension.getManifestUrl());
                 task.getClientOptionsOverridesFile()
-                    .fileValue(new File(project.getGradle().getGradleUserHomeDir(), "gtnh/fullpack/options.txt"));
+                    .fileValue(
+                        new File(
+                            project.getGradle()
+                                .getGradleUserHomeDir(),
+                            "gtnh/fullpack/options.txt"));
                 task.getRuntimeDirectoryName()
                     .set("client");
                 task.getRuntimePathFile()

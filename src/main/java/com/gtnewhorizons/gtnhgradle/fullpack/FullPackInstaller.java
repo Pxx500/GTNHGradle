@@ -58,7 +58,14 @@ public final class FullPackInstaller {
     public Path prepare(FullPackManifest manifest, String currentOwner, Path currentModJar,
         List<FullPackDependencyOverlayPlanner.Overlay> dependencyOverlays, String runtimeDirectoryName,
         boolean cleanRuntime) {
-        return prepare(manifest, currentOwner, currentModJar, dependencyOverlays, runtimeDirectoryName, cleanRuntime, null);
+        return prepare(
+            manifest,
+            currentOwner,
+            currentModJar,
+            dependencyOverlays,
+            runtimeDirectoryName,
+            cleanRuntime,
+            null);
     }
 
     public Path prepare(FullPackManifest manifest, String currentOwner, Path currentModJar,
@@ -316,7 +323,8 @@ public final class FullPackInstaller {
         }
         if (!Files.exists(source)) {
             Files.createDirectories(source.getParent());
-            try (InputStream defaults = FullPackInstaller.class.getResourceAsStream("/fullpack/client-options.defaults")) {
+            try (InputStream defaults = FullPackInstaller.class
+                .getResourceAsStream("/fullpack/client-options.defaults")) {
                 try {
                     Files.copy(defaults, source);
                 } catch (FileAlreadyExistsException ignored) {
@@ -347,8 +355,7 @@ public final class FullPackInstaller {
             replacements.put(setting.substring(0, setting.indexOf(':')), setting);
         }
         final Path options = runtime.resolve("options.txt");
-        final List<String> original = Files.isRegularFile(options)
-            ? Files.readAllLines(options, StandardCharsets.UTF_8)
+        final List<String> original = Files.isRegularFile(options) ? Files.readAllLines(options, StandardCharsets.UTF_8)
             : List.of();
         final List<String> lines = new ArrayList<>(original);
         for (int i = 0; i < lines.size(); i++) {
