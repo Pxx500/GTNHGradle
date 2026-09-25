@@ -65,7 +65,6 @@ class FullPackInstallerTest {
             bytes("local-dependency"),
             Files.readAllBytes(runtime.resolve("mods/dependency-release.jar")));
         assertEquals("generated", Files.readString(runtime.resolve("config/generated.cfg")));
-        assertTrue(Files.readString(runtime.resolve("options.txt")).contains("soundCategory_music:0.1"));
         assertTrue(
             runtime.toString()
                 .contains("client"));
@@ -106,24 +105,57 @@ class FullPackInstallerTest {
     }
 
     @Test
-    void newClientRuntimeUsesQuieterSoundDefaultsWithoutChangingOtherOptions() throws Exception {
+    void newClientRuntimeCreatesEditableDefaultOptionsFile() throws Exception {
         FullPackManifest.Archive configArchive = archive("/config.zip", List.of(), false);
         FullPackManifest manifest = manifest("audio", List.of(), List.of(configArchive), Map.of());
         Path cacheRoot = temporaryDirectory.resolve("fullpack");
         cache(
             cacheRoot,
             configArchive,
-            zip(Map.of("options.txt", bytes("fov:0.0\nsoundCategory_master:1.0\nsoundCategory_music:1.0\n"))));
+            zip(Map.of("options.txt", bytes("fov:0.0\nlang:en_US\nsoundCategory_master:1.0\nsoundCategory_music:1.0\n"))));
         Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("local"));
+        Path overrides = temporaryDirectory.resolve("user-settings/options.txt");
 
-        Path runtime = installer(cacheRoot).prepare(manifest, "CurrentMod", localJar);
+        Path runtime = installer(cacheRoot).prepare(manifest, "CurrentMod", localJar, List.of(), "client", false, overrides);
         String options = Files.readString(runtime.resolve("options.txt"));
 
-        assertTrue(options.contains("fov:0.0"));
+        assertTrue(Files.readString(overrides).contains("fov:1.0"));
+        assertTrue(options.contains("fov:1.0"));
+        assertTrue(options.contains("guiScale:2"));
+        assertTrue(options.contains("lang:en_US"));
         assertTrue(options.contains("soundCategory_master:0.5"));
         assertTrue(options.contains("soundCategory_music:0.1"));
         assertTrue(options.contains("soundCategory_weather:0.0"));
         assertFalse(options.contains("soundCategory_master:1.0"));
+    }
+
+    @Test
+    void clientOptionsOverrideAppliesToNewAndReusedRuntime() throws Exception {
+        FullPackManifest manifest = manifest(
+            "options",
+            List.of(),
+            List.of(),
+            Map.of("options.txt", "fov:0.0\nguiScale:3\nlang:en_US\nsoundCategory_music:1.0\n"));
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("local"));
+        Path overrides = Files.writeString(
+            temporaryDirectory.resolve("local-options.txt"),
+            "fov:1.0\nguiScale:2\nsoundCategory_music:0.25\n");
+        FullPackInstaller installer = installer(temporaryDirectory.resolve("fullpack"));
+
+        Path runtime = installer.prepare(manifest, "CurrentMod", localJar, List.of(), "client", false, overrides);
+        String firstOptions = Files.readString(runtime.resolve("options.txt"));
+        assertTrue(firstOptions.contains("fov:1.0"));
+        assertTrue(firstOptions.contains("guiScale:2"));
+        assertTrue(firstOptions.contains("soundCategory_music:0.25"));
+        assertTrue(firstOptions.contains("lang:en_US"));
+
+        Files.writeString(runtime.resolve("options.txt"), "fov:0.5\nguiScale:3\nlang:pl_PL\n");
+        Path reused = installer.prepare(manifest, "CurrentMod", localJar, List.of(), "client", false, overrides);
+        String reusedOptions = Files.readString(reused.resolve("options.txt"));
+        assertEquals(runtime, reused);
+        assertTrue(reusedOptions.contains("fov:1.0"));
+        assertTrue(reusedOptions.contains("guiScale:2"));
+        assertTrue(reusedOptions.contains("lang:pl_PL"));
     }
 
     @Test

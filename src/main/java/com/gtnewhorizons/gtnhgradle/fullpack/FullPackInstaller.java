@@ -1,10 +1,12 @@
 package com.gtnewhorizons.gtnhgradle.fullpack;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.channels.FileChannel;
 import java.nio.channels.OverlappingFileLockException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -14,6 +16,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -28,10 +31,6 @@ public final class FullPackInstaller {
     private static final Duration CLIENT_RUNTIME_RETENTION = Duration.ofHours(24);
     private static final int CLIENT_METADATA_DEPTH = 4;
     private static final String LAST_USED_PREFIX = ".last-used-";
-    private static final List<String> CLIENT_SOUND_DEFAULTS = List.of(
-        "soundCategory_master:0.5",
-        "soundCategory_music:0.1",
-        "soundCategory_weather:0.0");
 
     private final Path root;
     private final FullPackAssetCache assetCache;
@@ -59,6 +58,12 @@ public final class FullPackInstaller {
     public Path prepare(FullPackManifest manifest, String currentOwner, Path currentModJar,
         List<FullPackDependencyOverlayPlanner.Overlay> dependencyOverlays, String runtimeDirectoryName,
         boolean cleanRuntime) {
+        return prepare(manifest, currentOwner, currentModJar, dependencyOverlays, runtimeDirectoryName, cleanRuntime, null);
+    }
+
+    public Path prepare(FullPackManifest manifest, String currentOwner, Path currentModJar,
+        List<FullPackDependencyOverlayPlanner.Overlay> dependencyOverlays, String runtimeDirectoryName,
+        boolean cleanRuntime, Path clientOptionsOverrides) {
         if (currentOwner == null || currentOwner.isBlank()) {
             throw new IllegalArgumentException("Current full-pack asset owner is required");
         }
@@ -75,7 +80,7 @@ public final class FullPackInstaller {
                 + "/"
                 + sanitize(runtimeDirectoryName);
             if ("client".equals(runtimeDirectoryName)) {
-                return prepareClient(
+                final Path runtime = prepareClient(
                     manifest,
                     currentOwner,
                     currentModJar,
@@ -83,6 +88,8 @@ public final class FullPackInstaller {
                     runsRoot,
                     checkoutPath,
                     cleanRuntime);
+                applyClientOptionsOverrides(runtime, clientOptionsOverrides);
+                return runtime;
             }
 
             final Path runtime = resolveInside(runsRoot, checkoutPath + "/" + sanitize(manifest.digest()));
@@ -125,7 +132,6 @@ public final class FullPackInstaller {
             deleteRuntime(runtime);
             Files.createDirectories(runtime);
             materialize(manifest, currentOwner, currentModJar, dependencyOverlays, runtime);
-            applyClientSoundDefaults(runtime);
             Files.createDirectories(prepared.getParent());
             Files.writeString(prepared, "", StandardCharsets.UTF_8);
             recordLastUsed(runtime);
@@ -304,24 +310,62 @@ public final class FullPackInstaller {
         }
     }
 
-    private static void applyClientSoundDefaults(Path runtime) throws IOException {
-        final Path options = runtime.resolve("options.txt");
-        final List<String> lines = Files.isRegularFile(options)
-            ? new ArrayList<>(Files.readAllLines(options, StandardCharsets.UTF_8))
-            : new ArrayList<>();
-        for (String setting : CLIENT_SOUND_DEFAULTS) {
-            final String key = setting.substring(0, setting.indexOf(':') + 1);
-            boolean found = false;
-            for (int i = 0; i < lines.size(); i++) {
-                if (lines.get(i)
-                    .startsWith(key)) {
-                    lines.set(i, setting);
-                    found = true;
+    private static void applyClientOptionsOverrides(Path runtime, Path source) throws IOException {
+        if (source == null) {
+            return;
+        }
+        if (!Files.exists(source)) {
+            Files.createDirectories(source.getParent());
+            try (InputStream defaults = FullPackInstaller.class.getResourceAsStream("/fullpack/client-options.defaults")) {
+                try {
+                    Files.copy(defaults, source);
+                } catch (FileAlreadyExistsException ignored) {
+                    // Another full-pack run created the same user settings file.
                 }
             }
-            if (!found) {
-                lines.add(setting);
+        }
+        final List<String> settings = new ArrayList<>();
+        for (String line : Files.readAllLines(source, StandardCharsets.UTF_8)) {
+            final String setting = line.strip();
+            if (setting.isEmpty()) {
+                continue;
             }
+            if (setting.indexOf(':') < 1) {
+                throw new IllegalArgumentException("Invalid full-pack option in " + source + ": " + setting);
+            }
+            settings.add(setting);
+        }
+        mergeClientOptions(runtime, settings);
+    }
+
+    private static void mergeClientOptions(Path runtime, List<String> settings) throws IOException {
+        if (settings.isEmpty()) {
+            return;
+        }
+        final Map<String, String> replacements = new LinkedHashMap<>();
+        for (String setting : settings) {
+            replacements.put(setting.substring(0, setting.indexOf(':')), setting);
+        }
+        final Path options = runtime.resolve("options.txt");
+        final List<String> original = Files.isRegularFile(options)
+            ? Files.readAllLines(options, StandardCharsets.UTF_8)
+            : List.of();
+        final List<String> lines = new ArrayList<>(original);
+        for (int i = 0; i < lines.size(); i++) {
+            final String line = lines.get(i);
+            final int separator = line.indexOf(':');
+            if (separator < 0) {
+                continue;
+            }
+            final String key = line.substring(0, separator);
+            final String replacement = replacements.remove(key);
+            if (replacement != null) {
+                lines.set(i, replacement);
+            }
+        }
+        lines.addAll(replacements.values());
+        if (lines.equals(original)) {
+            return;
         }
 
         final Path replacement = Files.createTempFile(runtime, "options-", ".tmp");

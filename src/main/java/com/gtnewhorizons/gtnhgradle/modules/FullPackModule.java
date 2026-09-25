@@ -189,6 +189,8 @@ public class FullPackModule implements GTNHModule {
                 task.setDescription("Downloads and assembles a complete GTNH client with the locally built mod");
                 task.getManifestUrl()
                     .set(extension.getManifestUrl());
+                task.getClientOptionsOverridesFile()
+                    .fileValue(new File(project.getGradle().getGradleUserHomeDir(), "gtnh/fullpack/options.txt"));
                 task.getRuntimeDirectoryName()
                     .set("client");
                 task.getRuntimePathFile()

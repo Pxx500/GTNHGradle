@@ -30,6 +30,9 @@ Or start a full dedicated server with:
 
 `runFullPack` runs `prepareFullPackClient` automatically. Downloaded files are shared between projects under
 `<GRADLE_USER_HOME>/caches/gtnh/fullpack`.
+On the first client run, GTNHGradle creates `<GRADLE_USER_HOME>/gtnh/fullpack/options.txt` with Quake Pro FOV,
+GUI scale 2, music at 10%, weather at 0%, and master volume at 50%. Edit or remove lines in that file to choose
+which settings `runFullPack` applies at each start. Other options stay as they are.
 `runFullPackServer` likewise runs `prepareFullPackServer`; it does not accept Minecraft's EULA for you.
 Set `fullPack.cleanServerRuntime` to `true` for automated runs that need a fresh server directory. Normal runs keep the EULA, world, and server configuration.
 

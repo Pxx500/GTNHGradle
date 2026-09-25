@@ -1,5 +1,6 @@
 package com.gtnewhorizons.gtnhgradle.fullpack;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
@@ -66,6 +67,9 @@ public abstract class PrepareFullPackClientTask extends DefaultTask {
     @Internal
     public abstract DirectoryProperty getCacheDirectory();
 
+    @Internal
+    public abstract RegularFileProperty getClientOptionsOverridesFile();
+
     @Input
     public abstract Property<Boolean> getPreferMavenLocal();
 
@@ -112,7 +116,10 @@ public abstract class PrepareFullPackClientTask extends DefaultTask {
                     .toPath(),
                 overlays,
                 getRuntimeDirectoryName().get(),
-                getCleanRuntime().get());
+                getCleanRuntime().get(),
+                getClientOptionsOverridesFile().getAsFile()
+                    .map(File::toPath)
+                    .getOrNull());
         writeRuntimePath(runtime);
         getLogger().lifecycle("Prepared GTNH {} at {}", getRuntimeDirectoryName().get(), runtime);
     }
