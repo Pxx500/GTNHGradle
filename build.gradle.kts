@@ -47,7 +47,7 @@ dependencies {
     implementation("com.google.code.gson:gson:2.13.2")
 
     // All these plugins will be present in the classpath of the project using our plugin, but not activated until explicitly applied
-    api(pluginDep("com.gtnewhorizons.retrofuturagradle","2.0.4"))
+    api(pluginDep("com.gtnewhorizons.retrofuturagradle","2.0.6"))
 
     // Settings plugins
     api(pluginDep("com.diffplug.blowdryerSetup", "1.8.0"))
