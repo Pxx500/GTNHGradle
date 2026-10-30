@@ -21,6 +21,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -246,6 +249,86 @@ class FullPackInstallerTest {
             runtime.getParent()
                 .getFileName()
                 .toString());
+    }
+
+    @Test
+    void longRunNamesLeaveRoomForNativeLibraries() throws Exception {
+        FullPackManifest manifest = manifest("manifest-digest", List.of(), List.of(), Map.of());
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("local"));
+        Path cacheRoot = temporaryDirectory.resolve("fullpack");
+        FullPackInstaller installer = installer(cacheRoot);
+        String owner = "skin-masterbench-tracy-gc-baseline-java21-one";
+        String library = "OpenComputersMod-1.12.65-GTNH-52-libjnlua52-windows-x86_64.dll";
+
+        for (String side : List.of("client", "server")) {
+            Path runtime = installer.prepare(manifest, owner, localJar, List.of(), side);
+            assertTrue(
+                runtime.getFileName()
+                    .toString()
+                    .matches("[0-9a-z]{3}"));
+            String relativeLibrary = cacheRoot.relativize(runtime.resolve(library))
+                .toString();
+            String nativePath = "\\Device\\HarddiskVolume3\\Users\\Pxx500\\.gradle\\caches\\gtnh\\fullpack\\"
+                + relativeLibrary;
+            assertTrue(nativePath.length() < 240, nativePath);
+        }
+    }
+
+    @Test
+    void occupiedRuntimeCodesAreNotReusedForAnotherIdentity() throws Exception {
+        FullPackManifest manifest = manifest("manifest-digest", List.of(), List.of(), Map.of());
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("local"));
+        FullPackInstaller installer = installer(temporaryDirectory.resolve("fullpack"));
+
+        for (String side : List.of("client", "server")) {
+            Path runtime = installer.prepare(manifest, "CurrentMod", localJar, List.of(), side);
+            Path identity = runtime.resolveSibling(".identity-" + runtime.getFileName());
+            String fullIdentity = Files.readString(identity);
+            assertEquals(64, fullIdentity.length());
+            Path state = Files.writeString(runtime.resolve("keep.txt"), "running state");
+            Files.writeString(identity, "different identity");
+
+            Path next = installer.prepare(manifest, "CurrentMod", localJar, List.of(), side, true);
+            assertNotEquals(runtime, next);
+            assertEquals("running state", Files.readString(state));
+            assertEquals(next, installer.prepare(manifest, "CurrentMod", localJar, List.of(), side));
+        }
+    }
+
+    @Test
+    void distinctOwnersRemainIsolatedEvenWhenTheirSanitizedNamesMatch() throws Exception {
+        FullPackManifest manifest = manifest("manifest-digest", List.of(), List.of(), Map.of());
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("local"));
+        FullPackInstaller installer = installer(temporaryDirectory.resolve("fullpack"));
+
+        Path first = installer.prepare(manifest, "run/one", localJar);
+        Path second = installer.prepare(manifest, "run_one", localJar);
+
+        assertNotEquals(first, second);
+    }
+
+    @Test
+    void concurrentPreparationsAllocateDistinctCodes() throws Exception {
+        FullPackManifest manifest = manifest("manifest-digest", List.of(), List.of(), Map.of());
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("local"));
+        FullPackInstaller installer = installer(temporaryDirectory.resolve("fullpack"));
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(() -> {
+                start.await();
+                return installer.prepare(manifest, "first", localJar);
+            });
+            var second = executor.submit(() -> {
+                start.await();
+                return installer.prepare(manifest, "second", localJar);
+            });
+            start.countDown();
+            Path firstRuntime = first.get(30, TimeUnit.SECONDS);
+            Path secondRuntime = second.get(30, TimeUnit.SECONDS);
+            assertNotEquals(firstRuntime, secondRuntime);
+            assertEquals(firstRuntime, installer.prepare(manifest, "first", localJar));
+            assertEquals(secondRuntime, installer.prepare(manifest, "second", localJar));
+        }
     }
 
     @Test
