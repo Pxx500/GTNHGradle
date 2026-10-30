@@ -29,7 +29,7 @@ import de.undercouch.gradle.tasks.download.DownloadAction;
 public final class FullPackInstaller {
 
     private static final Duration CLIENT_RUNTIME_RETENTION = Duration.ofHours(24);
-    private static final int CLIENT_METADATA_DEPTH = 4;
+    private static final int CLIENT_METADATA_DEPTH = 2;
     private static final String LAST_USED_PREFIX = ".last-used-";
 
     private final Path root;
@@ -82,68 +82,101 @@ public final class FullPackInstaller {
             .toAbsolutePath()
             .normalize();
         try {
-            final String checkoutPath = sanitize(currentOwner) + "/"
-                + checkoutKey(currentModJar)
-                + "/"
-                + sanitize(runtimeDirectoryName);
-            if ("client".equals(runtimeDirectoryName)) {
-                final Path runtime = prepareClient(
-                    manifest,
-                    currentOwner,
-                    currentModJar,
-                    dependencyOverlays,
-                    runsRoot,
-                    checkoutPath,
-                    cleanRuntime);
-                applyClientOptionsOverrides(runtime, clientOptionsOverrides);
+            final boolean client = "client".equals(runtimeDirectoryName);
+            final String identity = FullPackAssetCache.sha256(
+                currentOwner.length() + ":"
+                    + currentOwner
+                    + "\n"
+                    + checkoutKey(currentModJar)
+                    + "\n"
+                    + manifest.digest()
+                    + "\n"
+                    + (client ? localInputDigest(currentModJar, dependencyOverlays) : ""));
+            final Path sideRoot = resolveInside(runsRoot, sanitize(runtimeDirectoryName));
+            Files.createDirectories(sideRoot);
+            final Path runtime = selectRuntime(sideRoot, identity);
+            final Path preparationLock = runtime.resolveSibling(".prepare-" + runtime.getFileName() + ".lock");
+            try (
+                FileChannel channel = FileChannel
+                    .open(preparationLock, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+                var ignored = channel.lock()) {
+                if (client) {
+                    prepareClient(
+                        manifest,
+                        currentOwner,
+                        currentModJar,
+                        dependencyOverlays,
+                        runsRoot,
+                        runtime,
+                        cleanRuntime);
+                    applyClientOptionsOverrides(runtime, clientOptionsOverrides);
+                } else {
+                    if (cleanRuntime) {
+                        deleteRuntime(runtime);
+                    }
+                    Files.createDirectories(runtime);
+                    materialize(manifest, currentOwner, currentModJar, dependencyOverlays, runtime);
+                }
                 return runtime;
             }
-
-            final Path runtime = resolveInside(runsRoot, checkoutPath + "/" + sanitize(manifest.digest()));
-            if (cleanRuntime) {
-                deleteRuntime(runtime);
-            }
-            Files.createDirectories(runtime);
-            materialize(manifest, currentOwner, currentModJar, dependencyOverlays, runtime);
-            return runtime;
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to materialize full-pack runtime", e);
         }
     }
 
-    private Path prepareClient(FullPackManifest manifest, String currentOwner, Path currentModJar,
-        List<FullPackDependencyOverlayPlanner.Overlay> dependencyOverlays, Path runsRoot, String runtimePath,
+    private void prepareClient(FullPackManifest manifest, String currentOwner, Path currentModJar,
+        List<FullPackDependencyOverlayPlanner.Overlay> dependencyOverlays, Path runsRoot, Path runtime,
         boolean cleanRuntime) throws IOException {
-        final String inputDigest = localInputDigest(currentModJar, dependencyOverlays);
-        final String runtimeDigest = FullPackAssetCache.sha256(manifest.digest() + "\n" + inputDigest);
-        final Path clientRoot = resolveInside(runsRoot, runtimePath);
-        final Path runtime = resolveInside(clientRoot, runtimeDigest);
         final Path prepared = runtime.resolve(".gtnh/prepared");
         if (!cleanRuntime && Files.isRegularFile(prepared)) {
             recordLastUsed(runtime);
             cleanupExpiredClients(runsRoot, runtime);
-            return runtime;
+            return;
         }
 
-        final Path preparationLock = resolveInside(clientRoot, ".prepare-" + runtimeDigest + ".lock");
-        Files.createDirectories(preparationLock.getParent());
+        deleteRuntime(runtime);
+        Files.createDirectories(runtime);
+        materialize(manifest, currentOwner, currentModJar, dependencyOverlays, runtime);
+        Files.createDirectories(prepared.getParent());
+        Files.writeString(prepared, "", StandardCharsets.UTF_8);
+        recordLastUsed(runtime);
+        cleanupExpiredClients(runsRoot, runtime);
+    }
+
+    private static synchronized Path selectRuntime(Path sideRoot, String identity) throws IOException {
         try (
             FileChannel channel = FileChannel
-                .open(preparationLock, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+                .open(sideRoot.resolve(".allocate.lock"), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
             var ignored = channel.lock()) {
-            if (!cleanRuntime && Files.isRegularFile(prepared)) {
-                recordLastUsed(runtime);
-                cleanupExpiredClients(runsRoot, runtime);
-                return runtime;
+            final Set<String> allocated = new HashSet<>();
+            try (var entries = Files.newDirectoryStream(sideRoot, ".identity-???")) {
+                for (Path metadata : entries) {
+                    final String code = metadata.getFileName()
+                        .toString()
+                        .substring(".identity-".length());
+                    if (!code.matches("[0-9a-z]{3}")) {
+                        continue;
+                    }
+                    allocated.add(code);
+                    if (Files.readString(metadata, StandardCharsets.UTF_8)
+                        .equals(identity)) {
+                        return sideRoot.resolve(code);
+                    }
+                }
             }
-            deleteRuntime(runtime);
-            Files.createDirectories(runtime);
-            materialize(manifest, currentOwner, currentModJar, dependencyOverlays, runtime);
-            Files.createDirectories(prepared.getParent());
-            Files.writeString(prepared, "", StandardCharsets.UTF_8);
-            recordLastUsed(runtime);
-            cleanupExpiredClients(runsRoot, runtime);
-            return runtime;
+            for (int index = 0; index < 36 * 36 * 36; index++) {
+                final String number = Integer.toString(index, 36);
+                final String code = "000".substring(number.length()) + number;
+                if (!allocated.contains(code)) {
+                    Files.writeString(
+                        sideRoot.resolve(".identity-" + code),
+                        identity,
+                        StandardCharsets.UTF_8,
+                        StandardOpenOption.CREATE_NEW);
+                    return sideRoot.resolve(code);
+                }
+            }
+            throw new IllegalStateException("No free full-pack runtime codes in " + sideRoot);
         }
     }
 
@@ -181,7 +214,7 @@ public final class FullPackInstaller {
         final String fileName = lastUsed.getFileName()
             .toString();
         final String runtimeDigest = fileName.substring(LAST_USED_PREFIX.length());
-        if (!runtimeDigest.matches("[0-9a-f]{64}") || !lastUsed.getParent()
+        if (!runtimeDigest.matches("[0-9a-z]{3}") || !lastUsed.getParent()
             .endsWith("client")) {
             return;
         }
