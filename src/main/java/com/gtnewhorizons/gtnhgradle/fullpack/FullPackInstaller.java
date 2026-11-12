@@ -8,6 +8,7 @@ import java.nio.channels.OverlappingFileLockException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
@@ -71,6 +72,20 @@ public final class FullPackInstaller {
     public Path prepare(FullPackManifest manifest, String currentOwner, Path currentModJar,
         List<FullPackDependencyOverlayPlanner.Overlay> dependencyOverlays, String runtimeDirectoryName,
         boolean cleanRuntime, Path clientOptionsOverrides) {
+        return prepare(
+            manifest,
+            currentOwner,
+            currentModJar,
+            dependencyOverlays,
+            runtimeDirectoryName,
+            cleanRuntime,
+            clientOptionsOverrides,
+            null);
+    }
+
+    public Path prepare(FullPackManifest manifest, String currentOwner, Path currentModJar,
+        List<FullPackDependencyOverlayPlanner.Overlay> dependencyOverlays, String runtimeDirectoryName,
+        boolean cleanRuntime, Path clientOptionsOverrides, Path savesDirectory) {
         if (currentOwner == null || currentOwner.isBlank()) {
             throw new IllegalArgumentException("Current full-pack asset owner is required");
         }
@@ -91,7 +106,9 @@ public final class FullPackInstaller {
                     + "\n"
                     + manifest.digest()
                     + "\n"
-                    + (client ? localInputDigest(currentModJar, dependencyOverlays) : ""));
+                    + (client ? localInputDigest(currentModJar, dependencyOverlays) : "")
+                    + (client && savesDirectory != null ? "\nsaves:" + savesDirectory.toAbsolutePath()
+                        .normalize() : ""));
             final Path sideRoot = resolveInside(runsRoot, sanitize(runtimeDirectoryName));
             Files.createDirectories(sideRoot);
             final Path runtime = selectRuntime(sideRoot, identity);
@@ -109,6 +126,9 @@ public final class FullPackInstaller {
                         runsRoot,
                         runtime,
                         cleanRuntime);
+                    if (savesDirectory != null) {
+                        connectSaves(runtime, savesDirectory);
+                    }
                     applyClientOptionsOverrides(runtime, clientOptionsOverrides);
                 } else {
                     if (cleanRuntime) {
@@ -134,7 +154,7 @@ public final class FullPackInstaller {
             return;
         }
 
-        deleteRuntime(runtime);
+        deleteClientRuntime(runtime);
         Files.createDirectories(runtime);
         materialize(manifest, currentOwner, currentModJar, dependencyOverlays, runtime);
         Files.createDirectories(prepared.getParent());
@@ -237,7 +257,7 @@ public final class FullPackInstaller {
                 if (lease == null) {
                     return;
                 }
-                deleteRuntime(runtime);
+                deleteClientRuntime(runtime);
                 Files.deleteIfExists(lastUsed);
             }
         } catch (IOException ignored) {
@@ -317,6 +337,12 @@ public final class FullPackInstaller {
         return FullPackAssetCache.sha256(identity.toString());
     }
 
+    private static void deleteClientRuntime(Path runtime) throws IOException {
+        // Remove the connection, not the checkout's worlds. A nonempty real saves directory stops cleanup.
+        Files.deleteIfExists(runtime.resolve("saves"));
+        deleteRuntime(runtime);
+    }
+
     private static void deleteRuntime(Path runtime) throws IOException {
         if (!Files.exists(runtime)) {
             return;
@@ -326,6 +352,48 @@ public final class FullPackInstaller {
                 .toList()) {
                 Files.delete(path);
             }
+        }
+    }
+
+    private static void connectSaves(Path runtime, Path savesDirectory) throws IOException {
+        final Path target = savesDirectory.toAbsolutePath()
+            .normalize();
+        Files.createDirectories(target);
+        final Path link = runtime.resolve("saves");
+        if (Files.exists(link, LinkOption.NOFOLLOW_LINKS)) {
+            if (!Files.isSameFile(link, target)) {
+                throw new IOException("Full-pack saves path already exists: " + link);
+            }
+            return;
+        }
+        if (!System.getProperty("os.name")
+            .startsWith("Windows")) {
+            Files.createSymbolicLink(link, target);
+            return;
+        }
+        final ProcessBuilder command = new ProcessBuilder(
+            "cmd.exe",
+            "/d",
+            "/v:off",
+            "/c",
+            "mklink /J \"%GTNH_SAVES_LINK%\" \"%GTNH_SAVES_TARGET%\"").redirectErrorStream(true);
+        command.environment()
+            .put("GTNH_SAVES_LINK", link.toString());
+        command.environment()
+            .put("GTNH_SAVES_TARGET", target.toString());
+        final Process process = command.start();
+        final String output = new String(
+            process.getInputStream()
+                .readAllBytes(),
+            StandardCharsets.UTF_8);
+        try {
+            if (process.waitFor() != 0) {
+                throw new IOException("Failed to connect full-pack saves: " + output.strip());
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread()
+                .interrupt();
+            throw new IOException("Interrupted while connecting full-pack saves", e);
         }
     }
 

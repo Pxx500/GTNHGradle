@@ -70,6 +70,9 @@ public abstract class PrepareFullPackClientTask extends DefaultTask {
     @Internal
     public abstract RegularFileProperty getClientOptionsOverridesFile();
 
+    @Internal
+    public abstract DirectoryProperty getSavesDirectory();
+
     @Input
     public abstract Property<Boolean> getPreferMavenLocal();
 
@@ -118,6 +121,9 @@ public abstract class PrepareFullPackClientTask extends DefaultTask {
                 getRuntimeDirectoryName().get(),
                 getCleanRuntime().get(),
                 getClientOptionsOverridesFile().getAsFile()
+                    .map(File::toPath)
+                    .getOrNull(),
+                getSavesDirectory().getAsFile()
                     .map(File::toPath)
                     .getOrNull());
         writeRuntimePath(runtime);
