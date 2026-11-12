@@ -49,6 +49,30 @@ class FullPackModuleFunctionalTest {
     }
 
     @Test
+    void clientSavesDefaultToTheCheckoutWithoutChangingServerPreparation() throws IOException {
+        setupProject();
+        Files.writeString(projectDirectory.resolve("build.gradle.kts"), """
+
+            tasks.register("verifyFullPackSaves") {
+                doLast {
+                    val client = tasks.named<
+                        com.gtnewhorizons.gtnhgradle.fullpack.PrepareFullPackClientTask
+                    >("prepareFullPackClient").get()
+                    val server = tasks.named<
+                        com.gtnewhorizons.gtnhgradle.fullpack.PrepareFullPackClientTask
+                    >("prepareFullPackServer").get()
+                    check(client.savesDirectory.get().asFile == file("run/fullpack/saves"))
+                    check(!server.savesDirectory.isPresent)
+                }
+            }
+            """, StandardOpenOption.APPEND);
+        assertTrue(
+            createRunner("verifyFullPackSaves").build()
+                .getOutput()
+                .contains("BUILD SUCCESSFUL"));
+    }
+
+    @Test
     void disablingModernJavaKeepsOrdinaryTasksAvailable() throws IOException {
         setupProject();
 

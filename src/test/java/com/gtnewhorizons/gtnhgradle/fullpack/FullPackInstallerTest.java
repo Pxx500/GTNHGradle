@@ -44,6 +44,76 @@ class FullPackInstallerTest {
     Path temporaryDirectory;
 
     @Test
+    void changedClientInputsKeepTheSameCheckoutWorlds() throws Exception {
+        FullPackManifest manifest = manifest("same-digest", List.of(), List.of(), Map.of());
+        Path checkout = temporaryDirectory.resolve("checkout & spaces");
+        Path saves = checkout.resolve("run/fullpack/saves");
+        Files.createDirectories(checkout);
+        Path localJar = Files.write(checkout.resolve("mod.jar"), bytes("first"));
+        FullPackInstaller installer = installer(temporaryDirectory.resolve("cache & spaces"));
+        Path first = installer.prepare(manifest, "CurrentMod", localJar, List.of(), "client", false, null, saves);
+        Files.createDirectories(first.resolve("saves/MyWorld"));
+        Files.writeString(first.resolve("saves/MyWorld/level.dat"), "world data");
+        assertEquals("world data", Files.readString(saves.resolve("MyWorld/level.dat")));
+
+        Files.write(localJar, bytes("second"));
+        Path second = installer.prepare(manifest, "CurrentMod", localJar, List.of(), "client", false, null, saves);
+        assertNotEquals(first, second);
+        assertEquals("world data", Files.readString(second.resolve("saves/MyWorld/level.dat")));
+        Files.writeString(second.resolve("saves/MyWorld/level.dat"), "updated world");
+        assertEquals("updated world", Files.readString(first.resolve("saves/MyWorld/level.dat")));
+    }
+
+    @Test
+    void runtimeCleanupAndCleanPreparationLeavePersistentWorldsIntact() throws Exception {
+        FullPackManifest manifest = manifest("same-digest", List.of(), List.of(), Map.of());
+        Path saves = temporaryDirectory.resolve("checkout/run/fullpack/saves");
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("first"));
+        FullPackInstaller installer = installer(temporaryDirectory.resolve("cache"));
+        Path first = installer.prepare(manifest, "CurrentMod", localJar, List.of(), "client", false, null, saves);
+        Files.createDirectories(first.resolve("saves/MyWorld"));
+        Files.writeString(first.resolve("saves/MyWorld/level.dat"), "world data");
+        Files.setLastModifiedTime(
+            lastUsedPath(first),
+            FileTime.from(
+                Instant.now()
+                    .minus(Duration.ofHours(25))));
+
+        Files.write(localJar, bytes("second"));
+        Path second = installer.prepare(manifest, "CurrentMod", localJar, List.of(), "client", false, null, saves);
+        assertFalse(Files.exists(first));
+        assertEquals("world data", Files.readString(second.resolve("saves/MyWorld/level.dat")));
+        assertEquals(
+            second,
+            installer.prepare(manifest, "CurrentMod", localJar, List.of(), "client", true, null, saves));
+        assertEquals("world data", Files.readString(second.resolve("saves/MyWorld/level.dat")));
+
+        Path otherSaves = temporaryDirectory.resolve("other-checkout/run/fullpack/saves");
+        Path other = installer.prepare(manifest, "CurrentMod", localJar, List.of(), "client", false, null, otherSaves);
+        assertFalse(Files.exists(other.resolve("saves/MyWorld")));
+        assertEquals("world data", Files.readString(saves.resolve("MyWorld/level.dat")));
+    }
+
+    @Test
+    void cleanupKeepsOldRuntimesContainingRealWorlds() throws Exception {
+        FullPackManifest manifest = manifest("same-digest", List.of(), List.of(), Map.of());
+        Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("first"));
+        FullPackInstaller installer = installer(temporaryDirectory.resolve("cache"));
+        Path old = installer.prepare(manifest, "CurrentMod", localJar);
+        Files.createDirectories(old.resolve("saves/MyWorld"));
+        Files.writeString(old.resolve("saves/MyWorld/level.dat"), "old world");
+        Files.setLastModifiedTime(
+            lastUsedPath(old),
+            FileTime.from(
+                Instant.now()
+                    .minus(Duration.ofHours(25))));
+
+        Path saves = temporaryDirectory.resolve("checkout/run/fullpack/saves");
+        installer.prepare(manifest, "CurrentMod", localJar, List.of(), "client", false, null, saves);
+        assertEquals("old world", Files.readString(old.resolve("saves/MyWorld/level.dat")));
+    }
+
+    @Test
     void localModAndDependencyOverlaysReplaceReleasedFilesBeforeTextFilesAreWritten() throws Exception {
         FullPackManifest.MavenModule module = new FullPackManifest.MavenModule("g", "dependency", "1.0");
         FullPackManifest manifest = manifest(
@@ -312,22 +382,28 @@ class FullPackInstallerTest {
         FullPackManifest manifest = manifest("manifest-digest", List.of(), List.of(), Map.of());
         Path localJar = Files.write(temporaryDirectory.resolve("mod.jar"), bytes("local"));
         FullPackInstaller installer = installer(temporaryDirectory.resolve("fullpack"));
+        Path saves = temporaryDirectory.resolve("checkout/run/fullpack/saves");
         CountDownLatch start = new CountDownLatch(1);
         try (var executor = Executors.newFixedThreadPool(2)) {
             var first = executor.submit(() -> {
                 start.await();
-                return installer.prepare(manifest, "first", localJar);
+                return installer.prepare(manifest, "first", localJar, List.of(), "client", false, null, saves);
             });
             var second = executor.submit(() -> {
                 start.await();
-                return installer.prepare(manifest, "second", localJar);
+                return installer.prepare(manifest, "second", localJar, List.of(), "client", false, null, saves);
             });
             start.countDown();
             Path firstRuntime = first.get(30, TimeUnit.SECONDS);
             Path secondRuntime = second.get(30, TimeUnit.SECONDS);
             assertNotEquals(firstRuntime, secondRuntime);
-            assertEquals(firstRuntime, installer.prepare(manifest, "first", localJar));
-            assertEquals(secondRuntime, installer.prepare(manifest, "second", localJar));
+            assertTrue(Files.isSameFile(firstRuntime.resolve("saves"), secondRuntime.resolve("saves")));
+            assertEquals(
+                firstRuntime,
+                installer.prepare(manifest, "first", localJar, List.of(), "client", false, null, saves));
+            assertEquals(
+                secondRuntime,
+                installer.prepare(manifest, "second", localJar, List.of(), "client", false, null, saves));
         }
     }
 
