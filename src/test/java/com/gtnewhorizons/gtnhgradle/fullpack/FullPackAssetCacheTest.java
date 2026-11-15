@@ -45,6 +45,27 @@ class FullPackAssetCacheTest {
     }
 
     @Test
+    void localAssetsAreResolvedAlongsideCachedDownloads() throws Exception {
+        FullPackAssetCache cache = cache("");
+        Path local = temporaryDirectory.resolve("GTNH 2.9.0.zip");
+        Files.writeString(local, "release archive");
+        FullPackManifest.File remote = file("https://example.invalid/mod.jar", FullPackManifest.Authentication.NONE);
+        Path cached = cache.objectPath(
+            remote.url()
+                .toString());
+        Files.createDirectories(cached.getParent());
+        Files.writeString(cached, "remote mod");
+        FullPackManifest.Archive archive = new FullPackManifest.Archive(
+            local.toUri(),
+            List.of(),
+            false,
+            FullPackManifest.Authentication.NONE);
+
+        assertEquals(List.of(local, cached), cache.resolveAll(List.of(archive, remote)));
+        assertEquals("release archive", Files.readString(local));
+    }
+
+    @Test
     void authenticatedAssetWithoutATokenFailsBeforeDownloading() {
         FullPackManifest.File file = file(
             "https://api.github.com/repos/GTNewHorizons/Test/releases/assets/1",

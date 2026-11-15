@@ -12,6 +12,10 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
+import java.util.concurrent.Executors;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.tools.ToolProvider;
 
@@ -27,6 +31,119 @@ class FullPackModuleFunctionalTest {
 
     @TempDir
     Path projectDirectory;
+
+    @Test
+    void localManifestAndArchivePrepareTheClientWithPersistentSaves() throws Exception {
+        setupManifestProject(0);
+        Path archive = projectDirectory.resolve("GTNH 2.9.0.zip");
+        try (JarOutputStream zip = new JarOutputStream(Files.newOutputStream(archive))) {
+            zip.putNextEntry(new JarEntry("config/release.cfg"));
+            zip.write("release config".getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry();
+        }
+        Files.writeString(projectDirectory.resolve("local-manifest.json"), """
+            {"version":1,"files":[],"archives":[{"url":"%s"}]}
+            """.formatted(archive.toUri()));
+        Files.writeString(projectDirectory.resolve("build.gradle.kts"), """
+
+            fullPack.manifestUrl.set(file("local-manifest.json").toURI().toString())
+            """, StandardOpenOption.APPEND);
+        String[] arguments = { "prepareFullPackClient", "--configuration-cache", "-Pgtnh.modules.updater=false" };
+        createRunner(arguments).build();
+        Path runtimePath = projectDirectory.resolve("build/fullpack/client-runtime.path");
+        Path runtime = Path.of(Files.readString(runtimePath));
+        assertEquals("release config", Files.readString(runtime.resolve("config/release.cfg")));
+        assertTrue(Files.isSameFile(runtime.resolve("saves"), projectDirectory.resolve("run/fullpack/saves")));
+        BuildResult reused = createRunner(arguments).build();
+        assertTrue(
+            reused.getOutput()
+                .contains("Reusing configuration cache"));
+        assertEquals(runtime, Path.of(Files.readString(runtimePath)));
+    }
+
+    @Test
+    void stalledManifestBodyStartsANewDownloadAfterOneSecond() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var executor = Executors.newCachedThreadPool();
+        server.setExecutor(executor);
+        AtomicInteger requests = new AtomicInteger();
+        server.createContext("/manifest.json", exchange -> {
+            int attempt = requests.incrementAndGet();
+            byte[] response = "{\"version\":1,\"files\":[]}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            try (var body = exchange.getResponseBody()) {
+                body.write(response, 0, 1);
+                body.flush();
+                if (attempt == 1) Thread.sleep(2500);
+                body.write(response, 1, response.length - 1);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread()
+                    .interrupt();
+            } finally {
+                exchange.close();
+            }
+        });
+        server.start();
+        try {
+            setupManifestProject(
+                server.getAddress()
+                    .getPort());
+            createRunner("prepareFullPackClient", "--configuration-cache", "-Pgtnh.modules.updater=false").build();
+            assertEquals(2, requests.get(), "A stalled first body must be cancelled and downloaded again");
+        } finally {
+            server.stop(0);
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void stalledManifestStopsAfterFiveIncreasingDeadlines() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var executor = Executors.newCachedThreadPool();
+        server.setExecutor(executor);
+        var starts = new CopyOnWriteArrayList<Long>();
+        server.createContext("/manifest.json", exchange -> {
+            starts.add(System.nanoTime());
+            exchange.sendResponseHeaders(200, 100);
+            try (var body = exchange.getResponseBody()) {
+                body.write('{');
+                body.flush();
+                Thread.sleep(30_000);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread()
+                    .interrupt();
+            } finally {
+                exchange.close();
+            }
+        });
+        server.start();
+        try {
+            setupManifestProject(
+                server.getAddress()
+                    .getPort());
+            BuildResult result = createRunner(
+                "prepareFullPackClient",
+                "--configuration-cache",
+                "-Pgtnh.modules.updater=false").buildAndFail();
+            assertEquals(5, starts.size());
+            for (int attempt = 1; attempt <= 5; attempt++) {
+                assertTrue(
+                    result.getOutput()
+                        .contains("attempt " + attempt + "/5 failed (" + attempt + " s limit)"));
+                if (attempt < 5) {
+                    long elapsed = TimeUnit.NANOSECONDS.toMillis(starts.get(attempt) - starts.get(attempt - 1));
+                    assertTrue(elapsed >= attempt * 1000L - 250, "Attempt ended before its deadline: " + attempt);
+                }
+            }
+            assertTrue(
+                TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - starts.getFirst()) < 25,
+                "The five deadlines should total about fifteen seconds");
+            assertFalse(Files.exists(projectDirectory.resolve("build/fullpack/client-runtime.path")));
+        } finally {
+            server.stop(0);
+            executor.shutdownNow();
+        }
+    }
 
     @Test
     void conventionPluginRegistersFullPackTasksWithoutProjectConfiguration() throws IOException {
@@ -504,6 +621,26 @@ class FullPackModuleFunctionalTest {
         assertTrue(
             result.getOutput()
                 .contains("BUILD SUCCESSFUL"));
+    }
+
+    private void setupManifestProject(int port) throws IOException {
+        setupProject();
+        Files.writeString(projectDirectory.resolve("local-mod.jar"), "local mod");
+        Files.writeString(projectDirectory.resolve("build.gradle.kts"), """
+
+            fullPack {
+                manifestUrl.set("http://127.0.0.1:%d/manifest.json")
+                cacheDirectory.set(layout.projectDirectory.dir("fullpack-cache"))
+            }
+            tasks.named<com.gtnewhorizons.gtnhgradle.fullpack.PrepareFullPackClientTask>(
+                "prepareFullPackClient"
+            ) {
+                localModJar.set(layout.projectDirectory.file("local-mod.jar"))
+                productionOverlayFiles.setFrom(emptyList<Any>())
+                productionOverlayArtifacts.set(emptyMap())
+                requestedProductionModules.set(emptyList())
+            }
+            """.formatted(port), StandardOpenOption.APPEND);
     }
 
     private void setupProject() throws IOException {
