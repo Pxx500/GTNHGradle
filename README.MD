@@ -32,6 +32,10 @@ Or start a full dedicated server with:
 `<GRADLE_USER_HOME>/caches/gtnh/fullpack`.
 Client worlds are stored in `run/fullpack/saves` in the current checkout and shared between its full-pack runs.
 Don't open the same world in two clients at once.
+Manifest downloads make up to five attempts with complete-download deadlines of
+1, 2, 3, 4 and 5 seconds. An unsuccessful attempt is cancelled before the next
+attempt starts. Exhausting the attempts fails preparation with the last cause.
+`fullPack.manifestUrl` and manifest assets also accept `file:` URLs for local manifests and archives.
 On the first client run, GTNHGradle creates `<GRADLE_USER_HOME>/gtnh/fullpack/options.txt` with Quake Pro FOV,
 GUI scale 2, music at 10%, weather at 0%, and master volume at 50%. Edit or remove lines in that file to choose
 which settings `runFullPack` applies at each start. Other options stay as they are.

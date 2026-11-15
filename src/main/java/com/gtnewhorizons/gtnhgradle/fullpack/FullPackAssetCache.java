@@ -14,7 +14,7 @@ import java.util.concurrent.ExecutionException;
 
 import de.undercouch.gradle.tasks.download.DownloadAction;
 
-/** A shared cache keyed by the asset URL. */
+/** Resolves local assets and caches remote assets by URL. */
 public final class FullPackAssetCache {
 
     private static final int HASH_BUFFER_SIZE = 8192;
@@ -42,6 +42,10 @@ public final class FullPackAssetCache {
         }
 
         final List<? extends FullPackManifest.Asset> missingAssets = assets.stream()
+            .filter(
+                asset -> !"file".equalsIgnoreCase(
+                    asset.url()
+                        .getScheme()))
             .filter(
                 asset -> !Files.isRegularFile(
                     objectPath(
@@ -75,9 +79,12 @@ public final class FullPackAssetCache {
             githubDownload);
         return assets.stream()
             .map(
-                asset -> objectPath(
+                asset -> "file".equalsIgnoreCase(
                     asset.url()
-                        .toString()))
+                        .getScheme()) ? Path.of(asset.url())
+                            : objectPath(
+                                asset.url()
+                                    .toString()))
             .toList();
     }
 

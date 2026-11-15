@@ -3,13 +3,21 @@ package com.gtnewhorizons.gtnhgradle.fullpack;
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.HttpURLConnection;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import javax.inject.Inject;
 
@@ -37,13 +45,12 @@ import de.undercouch.gradle.tasks.download.DownloadAction;
 @DisableCachingByDefault(because = "The remote manifest may change without its URL changing")
 public abstract class PrepareFullPackClientTask extends DefaultTask {
 
-    private final DownloadAction manifestDownload;
+    private static final int MANIFEST_ATTEMPTS = 5;
     private final DownloadAction publicAssetsDownload;
     private final DownloadAction githubAssetsDownload;
 
     @Inject
     public PrepareFullPackClientTask() {
-        manifestDownload = new DownloadAction(getProject(), this);
         publicAssetsDownload = new DownloadAction(getProject(), this);
         githubAssetsDownload = new DownloadAction(getProject(), this);
     }
@@ -161,28 +168,53 @@ public abstract class PrepareFullPackClientTask extends DefaultTask {
     }
 
     private String downloadManifest() {
-        final Path destination = getTemporaryDir().toPath()
-            .resolve("manifest.json");
-        manifestDownload.src(getManifestUrl().get());
-        manifestDownload.dest(destination.toFile());
-        manifestDownload.header("User-Agent", "GTNHGradle-fullpack");
-        manifestDownload.connectTimeout(30_000);
-        manifestDownload.readTimeout(2 * 60_000);
-        manifestDownload.overwrite(true);
-        manifestDownload.tempAndMove(true);
-        try {
-            manifestDownload.execute(true)
-                .get();
-            return Files.readString(destination, StandardCharsets.UTF_8);
-        } catch (InterruptedException e) {
-            Thread.currentThread()
-                .interrupt();
-            throw new GradleException("Interrupted while downloading the full-pack manifest", e);
-        } catch (ExecutionException e) {
-            throw new GradleException("Failed to download the full-pack manifest", e.getCause());
-        } catch (IOException e) {
-            throw new UncheckedIOException("Failed to download the full-pack manifest", e);
+        final URI uri = URI.create(getManifestUrl().get());
+        if ("file".equalsIgnoreCase(uri.getScheme())) {
+            try {
+                return Files.readString(Path.of(uri), StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                throw new UncheckedIOException("Failed to read the local full-pack manifest", e);
+            }
         }
+        Throwable failure = null;
+        for (int attempt = 1; attempt <= MANIFEST_ATTEMPTS; attempt++) {
+            try (HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(attempt))
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .build()) {
+                final HttpRequest request = HttpRequest.newBuilder(uri)
+                    .header("User-Agent", "GTNHGradle-fullpack")
+                    .timeout(Duration.ofSeconds(attempt))
+                    .build();
+                final var download = client
+                    .sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                try {
+                    final HttpResponse<String> response = download.get(attempt, TimeUnit.SECONDS);
+                    if (response.statusCode() == HttpURLConnection.HTTP_OK) return response.body();
+                    failure = new IOException("Manifest download returned HTTP " + response.statusCode());
+                } catch (TimeoutException e) {
+                    failure = e;
+                } catch (ExecutionException e) {
+                    failure = e.getCause();
+                } catch (InterruptedException e) {
+                    Thread.currentThread()
+                        .interrupt();
+                    throw new GradleException("Interrupted while downloading the full-pack manifest", e);
+                } finally {
+                    download.cancel(true);
+                    client.shutdownNow();
+                }
+            }
+            getLogger().warn(
+                "Manifest download attempt {}/{} failed ({} s limit): {}",
+                attempt,
+                MANIFEST_ATTEMPTS,
+                attempt,
+                failure.toString());
+        }
+        throw new GradleException(
+            "Failed to download the full-pack manifest after " + MANIFEST_ATTEMPTS + " attempts",
+            failure);
     }
 
     private void writeRuntimePath(Path runtime) {
