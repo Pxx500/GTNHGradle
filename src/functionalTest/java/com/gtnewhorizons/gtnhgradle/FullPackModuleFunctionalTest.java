@@ -672,6 +672,13 @@ class FullPackModuleFunctionalTest {
             enableModernJavaSyntax = true
             enableGenericInjection = true
             """);
+        String javaHomes = System.getenv("ORG_GRADLE_PROJECT_org.gradle.java.installations.paths");
+        if (javaHomes != null) {
+            Files.writeString(
+                projectDirectory.resolve("gradle.properties"),
+                "org.gradle.java.installations.paths=" + javaHomes + "\n",
+                java.nio.file.StandardOpenOption.APPEND);
+        }
         Files.createDirectories(projectDirectory.resolve("src/main/java/com/myname/mymodid"));
     }
 
