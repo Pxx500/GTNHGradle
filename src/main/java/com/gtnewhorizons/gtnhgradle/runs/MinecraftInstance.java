@@ -26,21 +26,19 @@ import com.gtnewhorizons.gtnhgradle.fullpack.FullPackAssetCache;
 import com.gtnewhorizons.gtnhgradle.fullpack.FullPackInstaller;
 import com.gtnewhorizons.gtnhgradle.fullpack.FullPackRuntimeLeaseService;
 
-/** A leased game directory with immutable local classpath inputs and persistent worlds. */
+/** A leased game directory with immutable local classpath inputs and persistent client saves. */
 public final class MinecraftInstance implements Closeable {
 
     private static final Set<String> TRANSIENT_FILES = Set.of("saves", "logs", "crash-reports", "session.lock");
     private final Path directory;
     private final FileChannel channel;
     private final FileLock lease;
-    private final Path serverData;
     private List<Path> classpath;
 
-    private MinecraftInstance(Path directory, FileChannel channel, FileLock lease, Path serverData) {
+    private MinecraftInstance(Path directory, FileChannel channel, FileLock lease) {
         this.directory = directory;
         this.channel = channel;
         this.lease = lease;
-        this.serverData = serverData;
     }
 
     public static MinecraftInstance prepare(Path root, String task, Path sourceGame, List<Path> classpath,
@@ -61,14 +59,14 @@ public final class MinecraftInstance implements Closeable {
                 StandardOpenOption.READ,
                 StandardOpenOption.WRITE);
             FileLock lease = tryLock(channel);
-            if (lease == null) {
+            if (lease == null || (!client && Files.exists(selected.resolve(".prepared")))) {
                 channel.close();
                 continue;
             }
-            MinecraftInstance instance = new MinecraftInstance(selected, channel, lease, client ? null : sourceGame);
+            MinecraftInstance instance = new MinecraftInstance(selected, channel, lease);
             try {
                 Files.createDirectories(selected);
-                instance.snapshot(sourceGame, classpath, sharedCache, client, gameInputs, world);
+                instance.snapshot(sourceGame, classpath, sharedCache, client, gameInputs);
                 cleanupExpired(root, selected);
                 return instance;
             } catch (IOException | RuntimeException failure) {
@@ -81,21 +79,13 @@ public final class MinecraftInstance implements Closeable {
     }
 
     private void snapshot(Path sourceGame, List<Path> originalClasspath, Path sharedCache, boolean client,
-        List<Path> gameInputs, Path world) throws IOException {
+        List<Path> gameInputs) throws IOException {
         Path game = gameDirectory();
         Files.createDirectories(game);
         boolean prepared = Files.exists(directory.resolve(".prepared"));
         if (!prepared) for (Path entry : gameInputs) copy(entry, game.resolve(entry.getFileName()));
         if (client) {
             FullPackInstaller.connectDirectory(game.resolve("saves"), sourceGame.resolve("saves"));
-        } else {
-            FullPackInstaller.connectDirectory(game.resolve(world), sourceGame.resolve(world));
-            for (String name : List.of("eula.txt", "server.properties")) {
-                Path source = sourceGame.resolve(name);
-                if (Files.isRegularFile(source)) {
-                    Files.copy(source, game.resolve(name), StandardCopyOption.REPLACE_EXISTING);
-                }
-            }
         }
         List<Path> frozen = new ArrayList<>();
         for (int index = 0; index < originalClasspath.size(); index++) {
@@ -275,14 +265,6 @@ public final class MinecraftInstance implements Closeable {
     public void close() throws IOException {
         try (channel) {
             try {
-                if (serverData != null) {
-                    for (String name : List.of("eula.txt", "server.properties")) {
-                        Path source = gameDirectory().resolve(name);
-                        if (Files.isRegularFile(source)) {
-                            Files.copy(source, serverData.resolve(name), StandardCopyOption.REPLACE_EXISTING);
-                        }
-                    }
-                }
                 Files.setLastModifiedTime(directory, FileTime.from(Instant.now()));
             } finally {
                 lease.release();

@@ -93,32 +93,66 @@ class MinecraftInstanceTest {
     }
 
     @Test
-    void serverPreservesNestedWorldAndEulaWithoutAcceptingIt() throws IOException {
+    void consecutiveServersStartFreshWithoutChangingSourceWorldOrConfiguration() throws IOException {
         Path game = project.resolve("run/server");
-        Files.createDirectories(game.resolve("worlds/probe"));
-        Files.writeString(game.resolve("worlds/probe/level.dat"), "user world");
-        Files.writeString(game.resolve("server.properties"), "level-name=worlds/probe\n");
+        Path world = Path.of("worlds/probe");
+        Files.createDirectories(game.resolve(world));
+        Files.writeString(
+            game.resolve(world)
+                .resolve("level.dat"),
+            "source world");
+        String properties = "level-name=worlds/probe\nmax-players=2\n";
+        Files.writeString(game.resolve("server.properties"), properties);
         Files.writeString(game.resolve("eula.txt"), "eula=false\n");
-        try (var server = MinecraftInstance
-            .prepare(project.resolve("instances"), ":runServer25", game, List.of(), project.resolve("cache"), false)) {
-            assertTrue(
-                Files.isSameFile(
-                    game.resolve("worlds/probe"),
-                    server.gameDirectory()
-                        .resolve("worlds/probe")));
+        Path instances = project.resolve("instances");
+        Path firstGame;
+        try (var first = MinecraftInstance
+            .prepare(instances, ":runServer25", game, List.of(), project.resolve("cache"), false)) {
+            firstGame = first.gameDirectory();
+            assertFalse(Files.exists(firstGame.resolve(world)), "The source world must not be inherited");
+            assertEquals(properties, Files.readString(firstGame.resolve("server.properties")));
+            assertEquals("eula=false\n", Files.readString(firstGame.resolve("eula.txt")));
+            Files.createDirectories(firstGame.resolve(world));
+            Files.writeString(
+                firstGame.resolve(world)
+                    .resolve("level.dat"),
+                "first run world");
+            Files.writeString(firstGame.resolve("server.properties"), "level-name=another-world\n");
+            Files.writeString(firstGame.resolve("eula.txt"), "eula=true\n");
+        }
+        assertEquals(properties, Files.readString(game.resolve("server.properties")));
+        assertEquals("eula=false\n", Files.readString(game.resolve("eula.txt")));
+        try (var second = MinecraftInstance
+            .prepare(instances, ":runServer25", game, List.of(), project.resolve("cache"), false)) {
+            assertNotEquals(firstGame, second.gameDirectory());
+            assertFalse(
+                Files.exists(
+                    second.gameDirectory()
+                        .resolve(world)),
+                "The previous run's world must not be inherited");
+            assertEquals(
+                properties,
+                Files.readString(
+                    second.gameDirectory()
+                        .resolve("server.properties")));
             assertEquals(
                 "eula=false\n",
                 Files.readString(
-                    server.gameDirectory()
+                    second.gameDirectory()
                         .resolve("eula.txt")));
-            Files.writeString(
-                server.gameDirectory()
-                    .resolve("server.properties"),
-                "level-name=worlds/probe\nmax-players=3\n");
         }
-        assertEquals("level-name=worlds/probe\nmax-players=3\n", Files.readString(game.resolve("server.properties")));
+        assertEquals(
+            "first run world",
+            Files.readString(
+                firstGame.resolve(world)
+                    .resolve("level.dat")));
+        assertEquals(
+            "source world",
+            Files.readString(
+                game.resolve(world)
+                    .resolve("level.dat")));
+        assertEquals(properties, Files.readString(game.resolve("server.properties")));
         assertEquals("eula=false\n", Files.readString(game.resolve("eula.txt")));
-        assertEquals("user world", Files.readString(game.resolve("worlds/probe/level.dat")));
     }
 
     @Test
