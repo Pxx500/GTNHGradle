@@ -127,7 +127,7 @@ public final class FullPackInstaller {
                         runtime,
                         cleanRuntime);
                     if (savesDirectory != null) {
-                        connectSaves(runtime, savesDirectory);
+                        connectDirectory(runtime.resolve("saves"), savesDirectory);
                     }
                     applyClientOptionsOverrides(runtime, clientOptionsOverrides);
                 } else {
@@ -163,7 +163,7 @@ public final class FullPackInstaller {
         cleanupExpiredClients(runsRoot, runtime);
     }
 
-    private static synchronized Path selectRuntime(Path sideRoot, String identity) throws IOException {
+    public static synchronized Path selectRuntime(Path sideRoot, String identity) throws IOException {
         try (
             FileChannel channel = FileChannel
                 .open(sideRoot.resolve(".allocate.lock"), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
@@ -355,11 +355,12 @@ public final class FullPackInstaller {
         }
     }
 
-    private static void connectSaves(Path runtime, Path savesDirectory) throws IOException {
-        final Path target = savesDirectory.toAbsolutePath()
+    /** Connects a runtime directory to persistent game data without moving the original files. */
+    public static void connectDirectory(Path link, Path directory) throws IOException {
+        final Path target = directory.toAbsolutePath()
             .normalize();
         Files.createDirectories(target);
-        final Path link = runtime.resolve("saves");
+        Files.createDirectories(link.getParent());
         if (Files.exists(link, LinkOption.NOFOLLOW_LINKS)) {
             if (!Files.isSameFile(link, target)) {
                 throw new IOException("Full-pack saves path already exists: " + link);

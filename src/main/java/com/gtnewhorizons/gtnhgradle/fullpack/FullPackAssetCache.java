@@ -150,13 +150,13 @@ public final class FullPackAssetCache {
         return key.substring(0, 2) + "/" + key.substring(2);
     }
 
-    static String sha256(String value) {
+    public static String sha256(String value) {
         final MessageDigest digest = sha256Digest();
         return java.util.HexFormat.of()
             .formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
     }
 
-    static String sha256(Path path) throws IOException {
+    public static String sha256(Path path) throws IOException {
         final MessageDigest digest = sha256Digest();
         try (var input = Files.newInputStream(path)) {
             final byte[] buffer = new byte[HASH_BUFFER_SIZE];
