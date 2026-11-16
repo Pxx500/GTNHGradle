@@ -42,6 +42,12 @@ which settings `runFullPack` applies at each start. Other options stay as they a
 `runFullPackServer` likewise runs `prepareFullPackServer`; it does not accept Minecraft's EULA for you.
 Set `fullPack.cleanServerRuntime` to `true` for automated runs that need a fresh server directory. Normal runs keep the EULA, world, and server configuration.
 
+Launchers can pass `-PrunDir=<absolute game directory>` to select their own runtime directory.
+FullPack prepares the pack directly in that new or empty directory, without linking the checkout's saves.
+The caller owns its cleanup. Standard `runClient` and `runServer` tasks also respect `runDir`, leaving input
+snapshots and cleanup to the caller instead of allocating another instance.
+FullPack run tasks expose a `runtimeMods` file collection for additional production mod JARs.
+
 ### Using this fork in a mod repository
 
 Clone this repository, then run:

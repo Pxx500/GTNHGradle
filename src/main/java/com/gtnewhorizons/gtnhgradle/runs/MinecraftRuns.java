@@ -18,6 +18,8 @@ public final class MinecraftRuns {
     private MinecraftRuns() {}
 
     public static void install(Project project) {
+        Object runDirectory = project.findProperty("runDir");
+        File requestedDirectory = runDirectory == null ? null : project.file(runDirectory);
         File root = project.getRootProject()
             .getLayout()
             .getProjectDirectory()
@@ -35,6 +37,13 @@ public final class MinecraftRuns {
             .configureEach(task -> {
                 if (!task.getName()
                     .matches("run(Client|Server).*")) return;
+                if (requestedDirectory != null) {
+                    task.setWorkingDir(requestedDirectory);
+                    task.doFirst(
+                        "select caller game directory",
+                        current -> ((RunMinecraftTask) current).setWorkingDir(requestedDirectory));
+                    return;
+                }
                 var frozenClasspath = project.getObjects()
                     .fileCollection();
                 task.usesService(service);

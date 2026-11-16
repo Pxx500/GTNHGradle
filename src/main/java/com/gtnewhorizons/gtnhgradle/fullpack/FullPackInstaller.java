@@ -86,6 +86,21 @@ public final class FullPackInstaller {
     public Path prepare(FullPackManifest manifest, String currentOwner, Path currentModJar,
         List<FullPackDependencyOverlayPlanner.Overlay> dependencyOverlays, String runtimeDirectoryName,
         boolean cleanRuntime, Path clientOptionsOverrides, Path savesDirectory) {
+        return prepare(
+            manifest,
+            currentOwner,
+            currentModJar,
+            dependencyOverlays,
+            runtimeDirectoryName,
+            cleanRuntime,
+            clientOptionsOverrides,
+            savesDirectory,
+            null);
+    }
+
+    public Path prepare(FullPackManifest manifest, String currentOwner, Path currentModJar,
+        List<FullPackDependencyOverlayPlanner.Overlay> dependencyOverlays, String runtimeDirectoryName,
+        boolean cleanRuntime, Path clientOptionsOverrides, Path savesDirectory, Path runDirectory) {
         if (currentOwner == null || currentOwner.isBlank()) {
             throw new IllegalArgumentException("Current full-pack asset owner is required");
         }
@@ -98,6 +113,20 @@ public final class FullPackInstaller {
             .normalize();
         try {
             final boolean client = "client".equals(runtimeDirectoryName);
+            if (runDirectory != null) {
+                Path runtime = runDirectory.toAbsolutePath()
+                    .normalize();
+                Files.createDirectories(runtime);
+                try (var entries = Files.list(runtime)) {
+                    if (entries.findAny()
+                        .isPresent()) {
+                        throw new IllegalArgumentException("runDir must be a new or empty game directory: " + runtime);
+                    }
+                }
+                materialize(manifest, currentOwner, currentModJar, dependencyOverlays, runtime);
+                if (client) applyClientOptionsOverrides(runtime, clientOptionsOverrides);
+                return runtime;
+            }
             final String identity = FullPackAssetCache.sha256(
                 currentOwner.length() + ":"
                     + currentOwner

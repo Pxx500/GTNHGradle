@@ -80,6 +80,13 @@ public abstract class PrepareFullPackClientTask extends DefaultTask {
     @Internal
     public abstract DirectoryProperty getSavesDirectory();
 
+    @Internal
+    public abstract DirectoryProperty getRunDirectory();
+
+    @InputFiles
+    @PathSensitive(PathSensitivity.NONE)
+    public abstract ConfigurableFileCollection getAdditionalMods();
+
     @Input
     public abstract Property<Boolean> getPreferMavenLocal();
 
@@ -110,8 +117,11 @@ public abstract class PrepareFullPackClientTask extends DefaultTask {
             .map(PrepareFullPackClientTask::parseModule)
             .toList();
         final List<FullPackDependencyOverlayPlanner.Artifact> artifacts = productionArtifacts(requestedModules);
-        final List<FullPackDependencyOverlayPlanner.Overlay> overlays = FullPackDependencyOverlayPlanner
-            .plan(manifest, artifacts, requestedModules, getPreferMavenLocal().get());
+        final List<FullPackDependencyOverlayPlanner.Overlay> overlays = new ArrayList<>(
+            FullPackDependencyOverlayPlanner.plan(manifest, artifacts, requestedModules, getPreferMavenLocal().get()));
+        for (File mod : getAdditionalMods()) {
+            overlays.add(new FullPackDependencyOverlayPlanner.Overlay("mods/" + mod.getName(), mod.toPath()));
+        }
         final Path runtime = new FullPackInstaller(
             getCacheDirectory().getAsFile()
                 .get()
@@ -131,6 +141,9 @@ public abstract class PrepareFullPackClientTask extends DefaultTask {
                     .map(File::toPath)
                     .getOrNull(),
                 getSavesDirectory().getAsFile()
+                    .map(File::toPath)
+                    .getOrNull(),
+                getRunDirectory().getAsFile()
                     .map(File::toPath)
                     .getOrNull());
         writeRuntimePath(runtime);

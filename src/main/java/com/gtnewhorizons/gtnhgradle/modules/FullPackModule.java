@@ -158,7 +158,11 @@ public class FullPackModule implements GTNHModule {
         final Provider<FullPackRuntimeLeaseService> runtimeLease = project.getGradle()
             .getSharedServices()
             .registerIfAbsent("fullPackRuntimeLease", FullPackRuntimeLeaseService.class, ignored -> {});
+        final Object runDirectory = project.findProperty("runDir");
+        final File requestedDirectory = runDirectory == null ? null : project.file(runDirectory);
         final Action<PrepareFullPackClientTask> configurePrepare = task -> {
+            task.getRunDirectory()
+                .fileValue(requestedDirectory);
             task.setGroup("GTNH Buildscript");
             task.getOwner()
                 .set(extension.getOwner());
@@ -249,6 +253,11 @@ public class FullPackModule implements GTNHModule {
 
         tasks.register("runFullPack", RunMinecraftTask.class, Distribution.CLIENT)
             .configure(task -> {
+                task.getExtensions()
+                    .add(
+                        "runtimeMods",
+                        prepare.get()
+                            .getAdditionalMods());
                 final ConfigurableFileCollection launcherClasspath = project.getObjects()
                     .fileCollection();
                 task.usesService(runtimeLease);
@@ -275,7 +284,8 @@ public class FullPackModule implements GTNHModule {
                                     : "net.minecraftforge.fml.common.launcher.FMLTweaker"));
                 task.doFirst("select prepared full-pack runtime", currentTask -> {
                     final RunMinecraftTask runTask = (RunMinecraftTask) currentTask;
-                    final File preparedRuntime = readRuntimeDirectory(clientRuntimePathFile);
+                    final File preparedRuntime = requestedDirectory != null ? requestedDirectory
+                        : readRuntimeDirectory(clientRuntimePathFile);
                     final File launcherPatch = new File(preparedRuntime, ".gtnh/launcher/lwjgl3ify-forgePatches.jar");
                     if (!launcherPatch.isFile()) {
                         throw new GradleException("Prepared full-pack runtime is missing " + launcherPatch);
@@ -296,6 +306,11 @@ public class FullPackModule implements GTNHModule {
             });
         tasks.register("runFullPackServer", RunMinecraftTask.class, Distribution.DEDICATED_SERVER)
             .configure(task -> {
+                task.getExtensions()
+                    .add(
+                        "runtimeMods",
+                        prepareServer.get()
+                            .getAdditionalMods());
                 configureRun.execute(task);
                 task.setDescription("Runs the complete GTNH server with the locally built mod");
                 task.dependsOn(prepareServer);
@@ -307,12 +322,15 @@ public class FullPackModule implements GTNHModule {
                 task.getArgumentProviders()
                     .add(
                         () -> List.of(
-                            new File(readRuntimeDirectory(serverRuntimePathFile), "lwjgl3ify-forgePatches.jar")
-                                .getAbsolutePath(),
+                            new File(
+                                requestedDirectory != null ? requestedDirectory
+                                    : readRuntimeDirectory(serverRuntimePathFile),
+                                "lwjgl3ify-forgePatches.jar").getAbsolutePath(),
                             "nogui"));
                 task.doFirst("select prepared full-pack server runtime", currentTask -> {
                     final RunMinecraftTask runTask = (RunMinecraftTask) currentTask;
-                    final File preparedRuntime = readRuntimeDirectory(serverRuntimePathFile);
+                    final File preparedRuntime = requestedDirectory != null ? requestedDirectory
+                        : readRuntimeDirectory(serverRuntimePathFile);
                     final File serverLauncher = new File(preparedRuntime, "lwjgl3ify-forgePatches.jar");
                     if (!serverLauncher.isFile()) {
                         throw new GradleException("Prepared full-pack runtime is missing " + serverLauncher);
