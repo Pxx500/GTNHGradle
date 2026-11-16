@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.io.IOException;
+import java.util.List;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -22,6 +23,8 @@ import javax.tools.ToolProvider;
 import org.gradle.testkit.runner.BuildResult;
 import org.gradle.testkit.runner.GradleRunner;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.io.TempDir;
 
 import com.gtnewhorizons.retrofuturagradle.shadow.com.google.common.collect.ImmutableMap;
@@ -31,6 +34,33 @@ class FullPackModuleFunctionalTest {
 
     @TempDir
     Path projectDirectory;
+
+    @Test
+    void callerDirectoryAndRuntimeModsAreUsedDuringPackPreparation() throws Exception {
+        setupManifestProject(0);
+        Files.writeString(projectDirectory.resolve("local-manifest.json"), "{\"version\":1,\"files\":[]}");
+        Files.writeString(projectDirectory.resolve("qa.jar"), "production QA");
+        Files.writeString(projectDirectory.resolve("build.gradle.kts"), """
+
+            fullPack.manifestUrl.set(file("local-manifest.json").toURI().toString())
+            fullPack.serverManifestUrl.set(file("local-manifest.json").toURI().toString())
+            listOf("runFullPack", "runFullPackServer").forEach { name ->
+                (tasks.named(name).get().extensions.getByName("runtimeMods") as ConfigurableFileCollection)
+                    .from(file("qa.jar"))
+            }
+            """, StandardOpenOption.APPEND);
+        for (String side : List.of("Client", "Server")) {
+            Path game = projectDirectory.resolve("test " + side + "/game");
+            createRunner("prepareFullPack" + side, "-PrunDir=" + game, "--configuration-cache").build();
+            assertEquals(
+                game,
+                Path.of(
+                    Files.readString(
+                        projectDirectory.resolve("build/fullpack/" + side.toLowerCase() + "-runtime.path"))));
+            assertEquals("production QA", Files.readString(game.resolve("mods/qa.jar")));
+            assertFalse(Files.exists(game.resolve("saves")));
+        }
+    }
 
     @Test
     void localManifestAndArchivePrepareTheClientWithPersistentSaves() throws Exception {
@@ -402,8 +432,9 @@ class FullPackModuleFunctionalTest {
                 .contains("BUILD SUCCESSFUL"));
     }
 
-    @Test
-    void runFullPackLaunchesThePreparedBootstrapWithConfigurationCache() throws IOException {
+    @ParameterizedTest
+    @ValueSource(booleans = { false, true })
+    void runFullPackLaunchesThePreparedBootstrapWithConfigurationCache(boolean externalDirectory) throws IOException {
         setupProject();
         Path runtime = projectDirectory.resolve("fake-runtime");
         Path launcherPatch = runtime.resolve(".gtnh/launcher/lwjgl3ify-forgePatches.jar");
@@ -450,6 +481,14 @@ class FullPackModuleFunctionalTest {
             """, StandardOpenOption.APPEND);
 
         String[] arguments = { "runFullPack", "--configuration-cache", "-Pgtnh.modules.updater=false" };
+        if (externalDirectory) {
+            Files.writeString(
+                runtimePathFile,
+                projectDirectory.resolve("another-launch")
+                    .toString());
+            arguments = new String[] { "runFullPack", "--configuration-cache", "-Pgtnh.modules.updater=false",
+                "-PrunDir=" + runtime };
+        }
         BuildResult first = createRunner(arguments).build();
         assertTrue(
             first.getOutput()
@@ -463,8 +502,9 @@ class FullPackModuleFunctionalTest {
                 .contains("prepared bootstrap launched"));
     }
 
-    @Test
-    void runFullPackServerUsesProductionDedicatedServerLauncher() throws IOException {
+    @ParameterizedTest
+    @ValueSource(booleans = { false, true })
+    void runFullPackServerUsesProductionDedicatedServerLauncher(boolean externalDirectory) throws IOException {
         setupProject();
         Files.writeString(projectDirectory.resolve("gradle.properties"), """
             usesMixins = true
@@ -516,7 +556,15 @@ class FullPackModuleFunctionalTest {
             }
             """, StandardOpenOption.APPEND);
 
-        BuildResult result = createRunner("verifyRunFullPackServerLauncher").build();
+        if (externalDirectory) Files.writeString(
+            runtimePathFile,
+            projectDirectory.resolve("another-launch")
+                .toString());
+        BuildResult result = externalDirectory
+            ? createRunner(
+                "verifyRunFullPackServerLauncher",
+                "-PrunDir=" + projectDirectory.resolve("fake-server-runtime")).build()
+            : createRunner("verifyRunFullPackServerLauncher").build();
 
         assertTrue(
             result.getOutput()

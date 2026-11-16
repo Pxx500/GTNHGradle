@@ -44,6 +44,37 @@ class FullPackInstallerTest {
     Path temporaryDirectory;
 
     @Test
+    void callerDirectoryContainsPackAndOverlaysWithoutSharedSaves() throws Exception {
+        FullPackManifest manifest = manifest("digest", List.of(), List.of(), Map.of("config/pack.cfg", "pack"));
+        Path local = Files.writeString(temporaryDirectory.resolve("mod.jar"), "local mod");
+        Path extra = Files.writeString(temporaryDirectory.resolve("qa.jar"), "qa mod");
+        Path cache = temporaryDirectory.resolve("cache");
+        Path game = temporaryDirectory.resolve("test run/game");
+        Path saves = temporaryDirectory.resolve("persistent-saves");
+        Path actual = installer(cache).prepare(
+            manifest,
+            "CurrentMod",
+            local,
+            List.of(new FullPackDependencyOverlayPlanner.Overlay("mods/qa.jar", extra)),
+            "client",
+            false,
+            null,
+            saves,
+            game);
+        assertEquals(game, actual);
+        assertEquals("local mod", Files.readString(game.resolve("mods/CurrentMod.jar")));
+        assertEquals("qa mod", Files.readString(game.resolve("mods/qa.jar")));
+        assertEquals("pack", Files.readString(game.resolve("config/pack.cfg")));
+        assertFalse(Files.exists(saves));
+        assertFalse(Files.exists(cache.resolve("runs")));
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> installer(cache)
+                .prepare(manifest, "CurrentMod", local, List.of(), "client", true, null, saves, game));
+        assertEquals("local mod", Files.readString(game.resolve("mods/CurrentMod.jar")));
+    }
+
+    @Test
     void changedClientInputsKeepTheSameCheckoutWorlds() throws Exception {
         FullPackManifest manifest = manifest("same-digest", List.of(), List.of(), Map.of());
         Path checkout = temporaryDirectory.resolve("checkout & spaces");

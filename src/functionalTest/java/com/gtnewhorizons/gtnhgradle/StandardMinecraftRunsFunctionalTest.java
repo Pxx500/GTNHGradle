@@ -1,6 +1,7 @@
 package com.gtnewhorizons.gtnhgradle;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -92,6 +93,28 @@ class StandardMinecraftRunsFunctionalTest {
             .getOutput();
         assertTrue(output.contains("Reusing configuration cache"), output);
         assertEquals(first, Files.readString(project.resolve("launched.txt")));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = { "runClient25", "runServer25" })
+    void callerDirectoryTakesPrecedenceOverInstanceAllocation(String task) throws IOException {
+        prepareRuntime(task);
+        Path game = Files.createDirectories(project.resolve("external Żółć/game"));
+        Files.writeString(game.resolve("caller.txt"), "owned by the launcher");
+        String[] arguments = { task, "-PrunDir=" + game, "--configuration-cache" };
+        runner(arguments).build();
+        assertEquals(
+            game.toRealPath(),
+            Path.of(
+                Files.readAllLines(project.resolve("launched.txt"))
+                    .getFirst())
+                .toRealPath());
+        assertEquals("owned by the launcher", Files.readString(game.resolve("caller.txt")));
+        assertTrue(
+            runner(arguments).build()
+                .getOutput()
+                .contains("Reusing configuration cache"));
+        assertFalse(Files.exists(project.resolve(".gradle/gtnh/instances")));
     }
 
     @Test
