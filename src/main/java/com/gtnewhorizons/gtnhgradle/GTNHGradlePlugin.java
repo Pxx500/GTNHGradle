@@ -78,6 +78,7 @@ public class GTNHGradlePlugin implements Plugin<Project> {
             .newInstance(GTNHExtension.class, project);
         project.getExtensions()
             .add(GTNHExtension.class, PROJECT_EXT_NAME, gtnh);
+        com.gtnewhorizons.gtnhgradle.runs.MinecraftRuns.install(project);
         if (!gtnh.configuration.blowdryerTag.isEmpty()) {
             // Make blowdryer available in "apply from:" scripts
             project.getExtensions()

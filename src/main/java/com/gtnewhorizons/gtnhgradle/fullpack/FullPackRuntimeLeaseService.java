@@ -6,11 +6,15 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 import org.gradle.api.services.BuildService;
 import org.gradle.api.services.BuildServiceParameters;
+
+import com.gtnewhorizons.gtnhgradle.runs.MinecraftInstance;
+import com.gtnewhorizons.retrofuturagradle.shadow.com.google.common.io.Closer;
 
 /** Holds shared runtime leases until the Gradle build and its Minecraft process finish. */
 public abstract class FullPackRuntimeLeaseService implements BuildService<BuildServiceParameters.None>, AutoCloseable {
@@ -18,6 +22,17 @@ public abstract class FullPackRuntimeLeaseService implements BuildService<BuildS
     private static final long LOCK_START = 0L;
 
     private final Map<Path, FileChannel> channels = new LinkedHashMap<>();
+    private final Closer instances = Closer.create();
+
+    public synchronized MinecraftInstance prepare(String task, Path root, Path sourceGame, List<Path> classpath,
+        Path sharedCache, boolean client) {
+        try {
+            return instances
+                .register(MinecraftInstance.prepare(root, task, sourceGame, classpath, sharedCache, client));
+        } catch (IOException failure) {
+            throw new UncheckedIOException("Failed to prepare Minecraft inputs", failure);
+        }
+    }
 
     public synchronized void acquire(Path runtime) {
         if (channels.containsKey(runtime)) {
@@ -47,12 +62,16 @@ public abstract class FullPackRuntimeLeaseService implements BuildService<BuildS
     @Override
     public synchronized void close() {
         try {
-            for (Map.Entry<Path, FileChannel> entry : channels.entrySet()) {
-                try (FileChannel channel = entry.getValue()) {
-                    FullPackInstaller.recordLastUsed(entry.getKey());
+            try {
+                instances.close();
+            } finally {
+                for (Map.Entry<Path, FileChannel> entry : channels.entrySet()) {
+                    try (FileChannel channel = entry.getValue()) {
+                        FullPackInstaller.recordLastUsed(entry.getKey());
+                    }
                 }
+                channels.clear();
             }
-            channels.clear();
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to release full-pack runtime lease", e);
         }
